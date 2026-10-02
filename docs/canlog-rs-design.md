@@ -1,8 +1,10 @@
-# CANLOG-RS 설계서 — 보완판 v0.2
+# CANLOG-RS 설계서 — 보완판 v0.3
 
 > Rust 기반 ASC / BLF / MF4 로그 분석·변환 CLI 및 Automotive Data Engine
 
 ## 개정 범위와 문서 상태
+
+v0.3에서는 `tomrford/gocan`과 `ecubus/EcuBus-Pro`의 코드를 검토해 34장의 계약을 추가했다. 상세 근거와 지원 범위 비교는 [별도 검토서](gocan-ecubus-review.md)에 기록했다.
 
 원안의 28개 장과 핵심 방향을 유지하되, 구현 시 해석이 갈릴 수 있는 데이터 계약·복구·저장·진단·검증 기준을 보완했다. 뒤에 변환 지원 범위, Application API, 운영 계약, 미확정 항목을 추가했다.
 
@@ -194,6 +196,8 @@ pub enum SignalValue {
 ```
 
 `SignalSample`에는 qualified signal key, timestamp, typed value, unit, validity/quality, 원본 record 참조를 둔다. MF4 raw value와 conversion 적용 physical value, DBC raw와 physical 값을 구분한다. 동일한 signal 이름을 채널·DB·메시지 구분 없이 key로 쓰지 않는다.
+
+enum label은 raw/physical 값을 대체하지 않는 별도 metadata다. multiplex inactive, not observed, truncated, invalid definition, decode unsupported를 구분한다. gocan의 inactive signal 구분을 참고하되 실제 Rust engine이 보고할 수 있는 상태만 확정하고 나머지는 unknown으로 남긴다.
 
 `Opaque`는 Reader가 경계를 확인한 미지원 데이터를 의미한다. 모든 포맷에서 재출력이 가능한 것은 아니며 크기 제한을 적용한다. ParseIssue는 정상 LogRecord와 별도로 전달한다.
 
@@ -1308,4 +1312,66 @@ Plan은 signal 조건에 필요한 CAN IDs, ISO-TP context, DB binding, clock co
 
 검토 범위는 API/구현/테스트의 정적 리뷰이며 Rust build나 canlog 통합 테스트의 실행 성공을 의미하지 않는다. 문서 내 SQL은 SQLite에서 schema 생성과 대표 제약을 확인하되, 완성된 storage 구현으로 표현하지 않는다.
 
-문서 검증 결과: 33개 장의 순서, code fence, TOML 예제 파싱을 확인했다. SQLite에서 schema 생성, 정상 데이터 삽입, 동일 timestamp의 복수 sample, 최대 u64의 BLOB 보존, 잘못된 ID/FK/coverage/anchor/origin 및 중복 sample 거부 7개 사례가 통과했다. 실제 로그 변환·engine 통합 테스트는 아직 실행하지 않았다.
+v0.2 문서 검증 결과: 33개 장의 순서, code fence, TOML 예제 파싱을 확인했다. SQLite에서 schema 생성, 정상 데이터 삽입, 동일 timestamp의 복수 sample, 최대 u64의 BLOB 보존, 잘못된 ID/FK/coverage/anchor/origin 및 중복 sample 거부 7개 사례가 통과했다. 실제 로그 변환·engine 통합 테스트는 아직 실행하지 않았다.
+
+---
+
+## 34. gocan · EcuBus-Pro 검토를 반영한 추가 계약
+
+2026-10-02 검토 revision은 gocan `d35e092d7787dd02a1e89884af1e713d132ec72e`, EcuBus-Pro `86f6e1bab0de1ab7910554e50d06f23fed7cf073`이다. [상세 검토서](gocan-ecubus-review.md)에 코드 근거, 지원 범위, 재현한 제한과 라이선스를 정리했다.
+
+### 34.1 관측 event와 decode 품질
+
+Event에 controller state와 receive overrun/capture gap을 표현할 수 있게 한다. unavailable counter는 실제 값 0과 구분한다. gap에는 원본 위치·channel·알려진 시간 범위·known/unknown loss count를 둔다. 파일 parsing에서 생긴 gap과 capture 장치의 overrun은 원인 종류를 구분하되 둘 다 진단·validation 품질로 전파한다.
+
+Signal 결과에는 raw/physical/label과 validity를 별도로 보관한다. inactive multiplex는 잘못된 payload나 미관측과 다른 상태다. 기존 DBC Engine의 physical-only 경로가 이 차이를 보고하지 못하면 정확성 경로로 전환하거나 unknown으로 표시한다. 결과가 없다는 이유로 0이나 유효한 값으로 채우지 않는다.
+
+### 34.2 Reader, PlaybackScheduler, live transport 분리
+
+LogReader에는 speed factor, pause 시간 보정, wall-clock sleep, CAN 송신을 넣지 않는다. index/convert/query는 읽을 수 있는 속도로 진행한다. 향후 GUI의 재생은 별도 PlaybackScheduler가 timestamp와 wall clock을 매핑하고 speed/pause/cancel을 담당한다.
+
+gocan의 active ISO-TP/UDS는 packet boundary와 test 사례를 참고하는 대상이다. 수동 로그 분석에서 FC를 보내거나 실제 통신 timeout을 그대로 쓰지 않는다. live transport, active replay, J1939/XCP/DoIP/HIL은 별도 후속 기능이며 기본 실행 경로에서 활성화하지 않는다.
+
+### 34.3 작업 cursor와 지속 checkpoint
+
+RecordRef는 원본 식별이며 작업 진행 cursor와 구별한다. runtime cursor는 source revision과 ordinal 순서를 기준으로 다음 읽기 위치를 가리킨다. 시간 범위 `[start,end)`와 cursor의 포함/제외 규칙은 별도로 문서화한다. gocan의 process-local generation을 그대로 영구 ID로 쓰지 않는다.
+
+영구 checkpoint는 source revision/content identity, parser/profile version, format-specific seek anchor, 마지막 확정 ordinal, query/decode 설정 hash, sink 종류와 상태를 포함한다. 원본·DB·설정이 바뀌면 거부하거나 새 작업으로 시작한다. 실패 시 진행을 자동으로 앞당겨 누락하지 않는다.
+
+재개는 sink가 허용할 때만 제공한다. SQLite batch는 commit된 coverage를 기준으로 재개할 수 있다. BLF/MF4 temp 파일은 포맷별 중단 복구가 구현·검증되지 않았으면 새 temp로 다시 생성한다. checkpoint 저장이 Writer append/recovery 지원을 의미하지 않는다. 재시도 중복 제거는 ordinal 기반 transaction 등 sink별 계약이 필요하며 exactly-once를 일반 보장으로 선언하지 않는다.
+
+### 34.4 Writer 완료 단계
+
+| 상태 | 의미 |
+|---|---|
+| accepted | Writer가 record를 받아 내부 처리에 포함함 |
+| flushed | 현재 buffer를 underlying writer에 전달함; header 확정·disk sync는 별개 |
+| finalized | finish 성공으로 포맷 header/counter/footer를 확정함 |
+| durable | 요청한 file sync 또는 DB durability 정책을 충족함 |
+| published | 완성된 파일을 최종 경로에 게시함 |
+
+WriteReport에는 관측 가능한 상태만 기록한다. buffer flush가 성공해도 finalized/durable/published로 표시하지 않는다. file sink 성공은 finalize와 publish를 충족해야 한다. durable 여부는 요청한 sync 정책에 따라 별도 표시한다.
+
+live recording을 추가하면 retention은 모든 필수 소비자의 안전한 checkpoint를 기준으로 한다. accepted만 보고 chunk를 삭제하지 않는다. lagging consumer와 memory quota 충돌 시 backpressure/stop/gap 중 설정된 동작을 수행하고 조용히 손실시키지 않는다. disk 파일 읽기에는 불필요한 전체 capture 저장소를 추가하지 않는다.
+
+### 34.5 Query page와 GUI 범위
+
+Application API의 후속 `query_page`는 file index와 bounded page cache를 사용한다. continuation token은 source revision, query/settings hash, 정렬 기준과 다음 위치에 묶는다. input/query가 바뀌면 stale token을 거부한다. 단일 scan 작업의 반복 page는 중복·누락 없이 정의한 순서를 따른다.
+
+정확한 총건수가 미확정이면 unknown과 `has_more`를 반환한다. 첫 page를 보여주기 위해 전체 file의 decoded frames를 Vec에 저장하지 않는다. 복잡한 sort/aggregate는 별도 bounded materialization/external sort 계획을 사용한다. GUI의 행 제한과 원본 query/export 범위는 구분한다.
+
+EcuBus-Pro의 channel mapping, frame/signal 상세, DLC/LEN 구분, time/Δt column을 참고한다. 논리 channel assignment는 실장치 없이도 가능해야 한다. UTC 근거가 없으면 확정 UTC column을 만들지 않으며 동일 시각·역행·window 경계는 기존 시간 계약을 따른다.
+
+### 34.6 포맷 참고 범위와 추가 검증
+
+- gocan MF4는 제한된 MDF 4.10 raw CAN Writer의 연구 대상으로 추가한다. DBC attachment, event marker, file history/application metadata와 compression profile을 각각 검증한다. decoded measurement 전체 Writer나 interrupted recovery로 범위를 확대 해석하지 않는다.
+- gocan이 설명한 equal timestamp ordering의 호환성 제한과 float64 relative time의 정밀도 문제를 별도 fixture에 넣는다. ns origin을 저장해도 상대 실수 precision 문제가 없어지는 것은 아니다.
+- EcuBus-Pro의 ASC/BLF는 비교 fixture 후보로 추가한다. 원시 DLC/ESI 누락과 µs 양자화가 있는 경로는 canlog의 무손실 정답으로 쓰지 않는다. 1234ns→1µs 등 재현한 제한은 검토서에 기록했다.
+- declared uncompressed size를 검사하는 것과 실제 decompression output을 제한하는 것은 다르다. 실제 확장량·queue·carry·batch를 합산한 총 budget을 확인한다.
+- lifecycle tests에 stale cursor, 느린 소비자, flush/finish 실패, 동일 시각, event-only export, gap 후 진단, page 중복·누락, raw DLC/ESI 보존을 추가한다. 테스트 존재와 실행 성공을 구분한다.
+
+### 34.7 우선순위와 재사용 결정
+
+이번 반영은 core/lifecycle/질의 계약 보완이며 26장의 MVP 범위를 유지한다. raw CAN MF4 Writer는 기존 Reader 우선 개발과 별도의 작은 실험으로 평가할 수 있다. GUI, 실시간 수집, active diagnostics를 MVP의 필수 조건으로 추가하지 않는다.
+
+Rust DBC는 candb-engine, CDD는 cdd-api를 계속 사용한다. gocan의 DBC/CDD와 EcuBus-Pro의 Python CDD importer는 비교·workflow 참고 대상이다. 동일 언어/ABI가 아니므로 직접 library dependency로 추가하지 않는다. 코드/fixture 이식은 해당 라이선스·notice·배포 조건을 확인한 별도 구현 작업으로 다룬다.
