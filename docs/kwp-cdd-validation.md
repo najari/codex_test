@@ -37,6 +37,16 @@ Python 환경과 패키지는 검증용이며 canlog runtime 의존성이 아니
 
 ## 회귀와 제한
 
+### CDD 진단 replay
+
+`scripts/verify_replay_cdd.py`는 위 독립 비교가 끝난 KWP 결과와 UDS 결과를 baseline으로 사용한다. 최종 배포용 바이너리의 증거는 `artifacts/replay_cdd_release_2026-10-03_02/results.json`에 있다. 새로운 KWP 독립 비교는 `artifacts/replay_cdd_kwp_release_base_2026-10-03_01/results.json`에 보관한다.
+
+Comfort·Engine JSONL의 모든 행이 기존 분석과 동일하다(각각 48행·95행). Comfort 콘솔의 20개 DBC frame 출력 간격을 측정했으며 원본 구간 12.002536초를 2배속으로 재생하는 예상 6.001268초와 일치한다. 콘솔의 CDD 값 `9877`, `5433`, `2000`, `8888`, 미정의/경고 상태도 확인한다. UDS replay 22건은 udsoncan/can-isotp/cantools로 검증된 기존 UDS JSONL과 동일하다. UDS pending·negative 콘솔에서 CDD `NEG` 메시지 2개의 표기도 확인한다. 총 26회 CLI를 비교하며 원본과 바이너리 SHA를 검증 전후 확인한다.
+
+배포용 `dist/canlog.exe`로 [편의 스크립트](../examples/asc-dbc-cdd/replay.ps1)의 기본 2배속 콘솔 및 대기 없는 JSONL 저장 모드를 실행했다. 결과는 `artifacts/replay_cdd_example_release_2026-10-03_02/`, `artifacts/replay_cdd_jsonl_release_2026-10-03_02/`에 보관한다. 원본의 부분 품질을 유지하며 콘솔은 데이터 파일 게시가 없으므로 `published=false`, JSONL은 `published=true`다.
+
+이번 변경의 기본 테스트 149개, CDD 포함 150개와 Clippy·format·core Rust 1.88 검사가 통과했다. 추가 테스트는 live 출력과 배속 간격, 즉시 재생의 값/identity 동등성, 잘못된 옵션·정의 파일 보호, stop과 atomic publication, native CDD의 콘솔·JSONL을 검증한다. 현재 진단 replay는 단일 전체 로그 1회다.
+
 canlog KWP 6개 테스트는 full mode, 다른 echo/orphan, TesterPresent suppression, pending/negative/ambiguity, malformed count/지원 범위와 CLI protocol 분리를 검사한다. 기본/`cdd` 전체 suite, Clippy, format, core Rust 1.88과 release의 기존 UDS/ISO-TP 독립 비교도 실행한다.
 
 별도 CDD 엔진은 codec 98, 선택한 API 35, core message/resolve 16개 테스트와 Clippy를 통과했다. upstream의 모든 corpus suite가 통과했다는 의미는 아니다. 제공된 `vector_example` corpus는 upstream의 고정 기대값과 다르며 `corpus_fields` 2개는 ABS session field P2/P3 이름과 state count 99/176 차이로 실패했다. 기존 CDD checkout에서도 같은 두 차이가 재현됐다. 원본 sample 또는 기존 기대값을 바꿔 통과시키지 않았다.

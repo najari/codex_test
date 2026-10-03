@@ -15,6 +15,8 @@ Vector CANSystemDemo 설정에서 확인한 연결은 다음과 같다. 샘플 �
 
 기존 샘플을 한 CLI에 ASC·DBC·CDD로 지정하는 전체 명령과 실행 스크립트는 [통합 예제](../examples/asc-dbc-cdd/README.md)에 있다.
 
+시간에 맞춰 재생하려면 [ASC·DBC·CDD replay 예제](../examples/asc-dbc-cdd/replay.md)를 사용한다. `replay`에 `--protocol kwp2000-vector`, routes/policy와 DBC·CDD를 지정하며 콘솔 진단 필드 또는 JSONL을 출력한다. 배속은 벽시계 대기에만 적용하고 원본 시간·진단 품질은 유지한다. 진단 replay는 현재 전체 로그 1회다.
+
 ```powershell
 .\scripts\build.ps1 -Cdd -Release
 .\examples\asc-dbc-cdd\run.ps1 -Sample comfort

@@ -23,12 +23,14 @@ pub enum IdKind {
     Standard,
     Extended,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Regression {
     Error,
     Immediate,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Sink {
     Jsonl,
     Console,
@@ -900,7 +902,10 @@ fn execute(
     Ok(())
 }
 
-fn write_decoded_console(out: &mut impl Write, decoded: &crate::dbc::DecodedFrame) -> Result<()> {
+pub(crate) fn write_decoded_console(
+    out: &mut (impl Write + ?Sized),
+    decoded: &crate::dbc::DecodedFrame,
+) -> Result<()> {
     let f = &decoded.record.frame;
     writeln!(
         out,

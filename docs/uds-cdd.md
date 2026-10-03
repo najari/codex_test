@@ -24,6 +24,8 @@
 
 `uds`에도 `--dbc CHANNEL=PATH`를 반복 지정해 DBC 프레임과 CDD transaction을 한 JSONL에 기록할 수 있다. CDD assignment가 없는 단일 route policy에는 `--cdd PATH --ecu QUAL --variant QUAL --allow-experimental`을 직접 지정한다. 각 단계의 상태와 원본 frame 위치를 유지한다. 기존 KWP 로그를 사용하는 실제 [ASC·DBC·CDD 통합 예제](../examples/asc-dbc-cdd/README.md)를 참고한다.
 
+같은 해석을 시간에 맞춰 수행하려면 `replay --protocol uds2013 --routes JSON --policy JSON`에 DBC/CDD 옵션을 지정한다. 배속·console/JSONL·제어·단일 전체 scan 규칙은 [진단 replay 예제](../examples/asc-dbc-cdd/replay.md)를 따른다. UDS policy와 KWP protocol을 섞으면 거부한다.
+
 ## 매칭 계약
 
 UDS policy schema 1은 각 transport route에 `protocol: "uds2013"`, `p2_ns`, `p2_star_ns`, `transaction_max_duration_ns`를 필수 지정한다. 기존 KWP 데모 로그에 UDS를 자동 적용하지 않는다. DiagnosticSessionControl의 응답에 있는 timing 값을 다음 요청의 policy로 자동 적용하지 않는다.

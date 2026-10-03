@@ -5,7 +5,7 @@ use crate::{
     index,
     isotp::{Config, Event, Reassembler},
     output::{self, AtomicOutput},
-    playback::Cancellation,
+    playback::{Cancellation, Control, RealClock, Scheduler},
 };
 use anyhow::{ensure, Result};
 use serde::Serialize;
@@ -15,6 +15,8 @@ use std::{
     fs::File,
     io::{self, BufWriter, Read, Write},
     path::{Path, PathBuf},
+    sync::mpsc::Receiver,
+    time::Instant,
 };
 
 #[derive(Debug, Clone, clap::Args)]
@@ -40,11 +42,31 @@ pub struct Definitions {
     #[arg(long, requires = "cdd")]
     pub allow_experimental: bool,
 }
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ReplaySettings {
+    pub speed: f64,
+    pub no_wait: bool,
+    pub on_regression: crate::app::Regression,
+    pub sink: crate::app::Sink,
+}
+pub struct ReplayConfig<'a> {
+    pub routes: &'a Path,
+    pub policy: &'a Path,
+    pub protocol: crate::uds::Protocol,
+    pub definitions: &'a Definitions,
+    pub settings: ReplaySettings,
+}
+#[derive(Clone, Copy)]
+struct Playback<'a> {
+    settings: ReplaySettings,
+    controls: Option<&'a Receiver<Control>>,
+}
 #[derive(Clone, Copy)]
 struct AnalysisRequest<'a> {
     policy: Option<&'a Path>,
     protocol: Option<crate::uds::Protocol>,
     definitions: &'a Definitions,
+    playback: Option<Playback<'a>>,
 }
 #[derive(Debug, Default, Serialize)]
 pub struct Report {
@@ -93,8 +115,16 @@ pub struct Report {
     pub scan_complete: bool,
     pub published: bool,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay: Option<ReplaySettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u128>,
 }
 impl Report {
+    fn console(&self) -> bool {
+        self.replay
+            .is_some_and(|r| r.sink == crate::app::Sink::Console)
+    }
     fn policy(&self) -> Option<&crate::uds::Config> {
         self.uds_policy.as_ref().or(self.kwp_policy.as_ref())
     }
@@ -170,16 +200,20 @@ fn emit_dbc(
     }
     let timeline_key = report.timeline_key.as_deref().unwrap();
     let identity = serde_json::to_vec(&(timeline_key, crate::dbc::ADAPTER_ID, &decoded))?;
-    serde_json::to_writer(
-        &mut *writer,
-        &DbcRow {
-            analyzer: crate::dbc::ADAPTER_ID,
-            timeline_key,
-            result_key: digest(&identity),
-            decoded: &decoded,
-        },
-    )?;
-    writeln!(writer)?;
+    if report.console() {
+        crate::app::write_decoded_console(writer, &decoded)?;
+    } else {
+        serde_json::to_writer(
+            &mut *writer,
+            &DbcRow {
+                analyzer: crate::dbc::ADAPTER_ID,
+                timeline_key,
+                result_key: digest(&identity),
+                decoded: &decoded,
+            },
+        )?;
+        writeln!(writer)?;
+    }
     report.output_rows += 1;
     Ok(())
 }
@@ -225,18 +259,88 @@ fn emit_uds(
             #[serde(flatten)]
             observation: &'a crate::uds::Observation,
         }
-        serde_json::to_writer(
-            &mut *writer,
-            &UdsRow {
-                schema_version: 1,
-                analyzer: &report.analyzer,
-                timeline_key,
-                result_key: digest(&identity),
-                observation: &observation,
-            },
-        )?;
-        writeln!(writer)?;
+        if report.console() {
+            write_diagnostic_console(writer, &observation)?;
+        } else {
+            serde_json::to_writer(
+                &mut *writer,
+                &UdsRow {
+                    schema_version: 1,
+                    analyzer: &report.analyzer,
+                    timeline_key,
+                    result_key: digest(&identity),
+                    observation: &observation,
+                },
+            )?;
+            writeln!(writer)?;
+        }
         report.output_rows += 1;
+    }
+    Ok(())
+}
+fn write_diagnostic_console(
+    writer: &mut dyn Write,
+    observation: &crate::uds::Observation,
+) -> Result<()> {
+    writeln!(
+        writer,
+        "  {:?} {} [{:?}] {} -> {}{}",
+        observation.protocol,
+        observation.route,
+        observation.status,
+        observation
+            .request
+            .as_ref()
+            .map_or("-", |p| p.data_hex.as_str()),
+        observation
+            .response
+            .as_ref()
+            .map_or("-", |p| p.data_hex.as_str()),
+        observation
+            .reason
+            .as_ref()
+            .map_or(String::new(), |r| format!(" ({r})"))
+    )?;
+    if let Some(cdd) = &observation.cdd {
+        writeln!(writer, "    CDD [{}]", cdd.status)?;
+        for (direction, message) in [("REQ", &cdd.request), ("POS", &cdd.response)] {
+            if let Some(message) = message {
+                if let Some(service) = message["service"].as_str() {
+                    writeln!(
+                        writer,
+                        "    {} {service}",
+                        message["message"].as_str().unwrap_or(direction)
+                    )?;
+                }
+                if let Some(fields) = message["fields"].as_array() {
+                    for field in fields {
+                        let raw = &field["raw"]["value"];
+                        writeln!(
+                            writer,
+                            "      {} = {}{}",
+                            field["key"].as_str().unwrap_or("?"),
+                            raw.as_str().map_or_else(|| raw.to_string(), str::to_owned),
+                            field
+                                .get("physical")
+                                .map_or(String::new(), |v| format!(" (physical={v})"))
+                        )?;
+                    }
+                }
+                if let Some(diagnostics) = message["diagnostics"].as_array() {
+                    for diagnostic in diagnostics {
+                        writeln!(
+                            writer,
+                            "      {}: {}",
+                            diagnostic["code"].as_str().unwrap_or("CDD"),
+                            diagnostic["message"].as_str().unwrap_or("?")
+                        )?;
+                    }
+                }
+            }
+        }
+        if let Some(error) = &cdd.error {
+            writeln!(writer, "    CDD error: {error}")?;
+        }
     }
     Ok(())
 }
@@ -291,8 +395,23 @@ fn emit(
             result_key: digest(&identity),
             event: &event,
         };
-        serde_json::to_writer(&mut *writer, &row)?;
-        writeln!(writer)?;
+        if report.console() {
+            writeln!(
+                writer,
+                "  ISO-TP {} {} [{}] {}{}",
+                event.route.as_deref().unwrap_or("-"),
+                event.kind,
+                event.status,
+                event.data_hex,
+                event
+                    .reason
+                    .as_ref()
+                    .map_or(String::new(), |reason| format!(" ({reason})"))
+            )?;
+        } else {
+            serde_json::to_writer(&mut *writer, &row)?;
+            writeln!(writer)?;
+        }
         report.output_rows += 1;
         emit_uds(writer, observations, report)?;
     }
@@ -311,6 +430,7 @@ pub fn analyze(
             policy: None,
             protocol: None,
             definitions: &Definitions::default(),
+            playback: None,
         },
         out,
         cancel,
@@ -366,6 +486,30 @@ pub fn analyze_with_definitions(
             policy: Some(policy),
             protocol: Some(protocol),
             definitions,
+            playback: None,
+        },
+        out,
+        cancel,
+    )
+}
+pub fn replay(
+    args: &InputArgs,
+    config: &ReplayConfig<'_>,
+    out: &IsotpOutput,
+    cancel: &Cancellation,
+    controls: Option<&Receiver<Control>>,
+) -> (Report, Result<()>) {
+    analyze_inner(
+        args,
+        config.routes,
+        AnalysisRequest {
+            policy: Some(config.policy),
+            protocol: Some(config.protocol),
+            definitions: config.definitions,
+            playback: Some(Playback {
+                settings: config.settings,
+                controls,
+            }),
         },
         out,
         cancel,
@@ -378,6 +522,7 @@ fn analyze_inner(
     out: &IsotpOutput,
     cancel: &Cancellation,
 ) -> (Report, Result<()>) {
+    let started = Instant::now();
     let policy = request.policy;
     let expected_protocol = request.protocol;
     let mut report = Report {
@@ -389,9 +534,13 @@ fn analyze_inner(
         }
         .into(),
         status: "running".into(),
+        replay: request.playback.map(|p| p.settings),
         ..Default::default()
     };
     let result = execute(args, routes, request, out, cancel, &mut report);
+    if request.playback.is_some() {
+        report.elapsed_ms = Some(started.elapsed().as_millis());
+    }
     report.status = match &result {
         Err(e) if e.is::<crate::playback::Cancelled>() => "cancelled",
         Err(_) => "failed",
@@ -483,6 +632,26 @@ fn execute(
     let policy = request.policy;
     let expected_protocol = request.protocol;
     let definitions = request.definitions;
+    let mut scheduler = request
+        .playback
+        .map(|playback| {
+            ensure!(
+                playback.settings.sink != crate::app::Sink::Csv,
+                "diagnostic replay supports JSONL or console, not signal CSV"
+            );
+            ensure!(
+                playback.settings.sink != crate::app::Sink::Console || out.output.is_none(),
+                "diagnostic console replay uses stdout; omit --output or use --sink jsonl"
+            );
+            Scheduler::new(
+                RealClock::default(),
+                playback.settings.speed,
+                playback.settings.no_wait,
+                playback.settings.on_regression == crate::app::Regression::Immediate,
+            )
+        })
+        .transpose()?;
+    let controls = request.playback.and_then(|p| p.controls);
     ensure!(
         args.input != "-" && !args.preserve_records,
         "ISO-TP requires a file and semantic parsing"
@@ -668,6 +837,9 @@ fn execute(
         cancel.check()?;
         match item {
             ReadItem::Frame(record) => {
+                if let Some(scheduler) = &mut scheduler {
+                    scheduler.wait(record.frame.timestamp_ns(), cancel, controls)?;
+                }
                 watermark = record.frame.timestamp_ns();
                 report.watermark_ns = watermark;
                 report.frames_examined += 1;
@@ -706,8 +878,14 @@ fn execute(
                         report,
                     )?;
                 }
+                if scheduler.is_some() {
+                    writer.flush()?;
+                }
             }
             ReadItem::Issue(issue) => {
+                if let Some(scheduler) = &mut scheduler {
+                    scheduler.wait_optional(issue.timestamp_ns, cancel, controls)?;
+                }
                 report.input_issues += 1;
                 if report.issue_examples.len() < 100 {
                     report.issue_examples.push(issue.clone());
@@ -735,15 +913,29 @@ fn execute(
                     emit_uds(&mut *writer, matcher.gap(issue.channel, watermark), report)?;
                 }
                 // The issue itself remains visible even without a report or active session.
-                serde_json::to_writer(
-                    &mut *writer,
-                    &serde_json::json!({"schema_version":1,"analyzer":ANALYZER,"timeline_key":report.timeline_key,"result_key":digest(&serde_json::to_vec(&(&report.timeline_key, &issue))?),"kind":"capture_gap","issue":issue}),
-                )?;
-                writeln!(writer)?;
+                if report.console() {
+                    writeln!(
+                        writer,
+                        "  capture_gap {:?}: {}",
+                        issue.location, issue.message
+                    )?;
+                } else {
+                    serde_json::to_writer(
+                        &mut *writer,
+                        &serde_json::json!({"schema_version":1,"analyzer":ANALYZER,"timeline_key":report.timeline_key,"result_key":digest(&serde_json::to_vec(&(&report.timeline_key, &issue))?),"kind":"capture_gap","issue":issue}),
+                    )?;
+                    writeln!(writer)?;
+                }
                 report.output_rows += 1;
                 *report.counts.entry("capture_gap".into()).or_default() += 1;
+                if scheduler.is_some() {
+                    writer.flush()?;
+                }
             }
         }
+    }
+    if let Some(scheduler) = &mut scheduler {
+        scheduler.wait_optional(None, cancel, controls)?;
     }
     emit(&mut *writer, reassembler.eof(), report, &mut matcher)?;
     if let Some(matcher) = &mut matcher {

@@ -31,6 +31,7 @@ Windows에는 Rust MSVC toolchain 1.88 이상, Visual Studio C++ Build Tools, Wi
 | `record --input INPUT -o OUTPUT` | 파일 또는 JSONL stdin을 새 로그로 기록 |
 | `replay INPUT` | 기본 1배속·1회, JSONL stdout으로 재생 |
 | `replay INPUT --dbc CHANNEL=PATH` | 재생 시간에 맞춰 DBC 신호 출력; JSONL 또는 `--sink console` |
+| `replay INPUT --routes JSON --policy JSON --protocol kwp2000-vector` | DBC·CDD를 함께 해석하는 물리 진단 replay; [실행 예제](examples/asc-dbc-cdd/replay.md) |
 | `uds INPUT --routes ROUTES --policy POLICY` | 물리 ISO-TP 기반 UDS 요청·응답·pending과 선택적 CDD 해석 |
 | `kwp INPUT --routes ROUTES --policy POLICY` | 기존 Vector KWP2000 물리 요청·응답과 CDD 식별 필드 해석 |
 | `cdd-info INPUT --allow-experimental` | CDD ECU·variant·서비스·DID·diagnostics 검사; `-Cdd` 빌드 필요 |

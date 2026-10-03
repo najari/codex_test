@@ -16,6 +16,7 @@
 - 기존 CANSystem ASC의 [KWP2000 물리 transaction·CDD 해석](kwp-cdd.md): full mode byte, TesterPresent 01/02, local identifier, pending/negative, 실험적 legacy inline 8-bit static과 BCD. 응답 없는 TesterPresent·미정의 legacy 요청·빈 DTC response proxy는 부분 결과로 유지.
 
 - ASC·DBC·CDD [통합 CLI 예제](../examples/asc-dbc-cdd/README.md): 한 scan의 DBC frame·transport·진단 결과, 공통 identity와 원본 위치, 단계별 품질·원본 보호.
+- ASC·DBC·CDD [진단 replay](../examples/asc-dbc-cdd/replay.md): 단일 전체 scan의 배속·즉시 재생·콘솔 필드/JSONL·pause/resume/stop, 원본 시간과 진단 품질·입력 및 publication 보호.
 
 ## 다음 구현 순서
 

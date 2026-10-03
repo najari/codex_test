@@ -1,8 +1,10 @@
 use serde_json::{json, Value};
 use std::{
     fs,
+    io::{BufRead, BufReader, Read, Write},
     path::Path,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
 
@@ -34,6 +36,172 @@ fn parse_rows(output: &Output) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+fn replay(dir: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_canlog"));
+    command
+        .current_dir(dir)
+        .args([
+            "replay",
+            "source.asc",
+            "--routes",
+            "routes.json",
+            "--policy",
+            "policy.json",
+            "--protocol",
+            "kwp2000-vector",
+            "--dbc",
+            "1=network.dbc",
+        ])
+        .args(args);
+    command
+}
+
+#[test]
+fn diagnostic_replay_emits_live_rows_at_scaled_time_and_keeps_analysis_values() {
+    let dir = TempDir::new().unwrap();
+    fixture(dir.path());
+    let source = fs::read_to_string(dir.path().join("source.asc"))
+        .unwrap()
+        .replace("0.01 1", "0.4 1");
+    fs::write(dir.path().join("source.asc"), source).unwrap();
+    let mut policy: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("policy.json")).unwrap()).unwrap();
+    policy["routes"][0]["p2_ns"] = json!(500_000_000);
+    policy["routes"][0]["transaction_max_duration_ns"] = json!(1_000_000_000);
+    fs::write(dir.path().join("policy.json"), policy.to_string()).unwrap();
+    let analysis = run(dir.path(), &["--dbc", "1=network.dbc"]);
+    assert!(analysis.status.success());
+    let mut child = replay(
+        dir.path(),
+        &["--speed", "2", "--report", "replay.report.json"],
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let mut stream = BufReader::new(child.stdout.take().unwrap());
+    let mut bytes = Vec::new();
+    stream.read_until(b'\n', &mut bytes).unwrap();
+    let first: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(first["kind"], "decoded_frame");
+    let first_at = Instant::now();
+    stream.read_to_end(&mut bytes).unwrap();
+    assert!(
+        first_at.elapsed() >= Duration::from_millis(140),
+        "rows were buffered until EOF or playback was not paced"
+    );
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(bytes, analysis.stdout);
+    let report: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("replay.report.json")).unwrap()).unwrap();
+    assert_eq!(report["replay"]["speed"], 2.0);
+    assert_eq!(report["replay"]["no_wait"], false);
+    assert_eq!(report["kwp_counts"]["positive"], 1);
+    let instant = replay(
+        dir.path(),
+        &[
+            "--no-wait",
+            "-o",
+            "replay.jsonl",
+            "--report",
+            "instant.report.json",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(instant.status.success());
+    assert_eq!(
+        fs::read(dir.path().join("replay.jsonl")).unwrap(),
+        analysis.stdout
+    );
+    let report: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("instant.report.json")).unwrap()).unwrap();
+    assert_eq!(report["replay"]["no_wait"], true);
+    assert_eq!(report["published"], true);
+}
+
+#[test]
+fn diagnostic_replay_rejects_unsupported_settings_and_protects_definitions() {
+    let dir = TempDir::new().unwrap();
+    fixture(dir.path());
+    let original = fs::read(dir.path().join("network.dbc")).unwrap();
+    for args in [
+        vec!["--repeat", "2"],
+        vec!["--repeat-gap", "0.1"],
+        vec!["--speed", "0"],
+        vec!["--sink", "csv"],
+        vec!["--format", "asc", "-o", "must-not-exist.asc"],
+        vec!["--sink", "console", "-o", "must-not-exist.jsonl"],
+        vec!["--sync"],
+    ] {
+        assert_eq!(
+            replay(dir.path(), &args).output().unwrap().status.code(),
+            Some(2)
+        );
+    }
+    for args in [
+        vec!["-o", "network.dbc", "--overwrite"],
+        vec!["--report", "network.dbc"],
+        vec!["--limit", "1", "-o", "must-not-exist.jsonl"],
+    ] {
+        assert_eq!(
+            replay(dir.path(), &args).output().unwrap().status.code(),
+            Some(1)
+        );
+    }
+    assert!(!dir.path().join("must-not-exist.asc").exists());
+    assert!(!dir.path().join("must-not-exist.jsonl").exists());
+    assert_eq!(fs::read(dir.path().join("network.dbc")).unwrap(), original);
+}
+
+#[test]
+fn diagnostic_replay_stop_keeps_existing_output_unpublished() {
+    let dir = TempDir::new().unwrap();
+    fixture(dir.path());
+    let source = fs::read_to_string(dir.path().join("source.asc"))
+        .unwrap()
+        .replace("0.01 1", "10.0 1");
+    fs::write(dir.path().join("source.asc"), source).unwrap();
+    fs::write(dir.path().join("output.jsonl"), "previous output").unwrap();
+    let mut child = replay(
+        dir.path(),
+        &[
+            "--control-stdin",
+            "-o",
+            "output.jsonl",
+            "--overwrite",
+            "--report",
+            "stopped.report.json",
+        ],
+    )
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    child.stdin.take().unwrap().write_all(b"stop\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(130),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("output.jsonl")).unwrap(),
+        "previous output"
+    );
+    let report: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("stopped.report.json")).unwrap()).unwrap();
+    assert_eq!(report["status"], "cancelled");
+    assert_eq!(report["published"], false);
+    assert_eq!(report["scan_complete"], false);
 }
 
 #[test]
@@ -225,6 +393,33 @@ fn one_cli_reads_asc_dbc_and_cdd_with_explicit_ecu_and_variant() {
         .as_str()
         .unwrap()
         .ends_with("model.cdd"));
+    let replay_options = [
+        "--no-wait",
+        "--cdd",
+        "model.cdd",
+        "--ecu",
+        "E",
+        "--variant",
+        "V",
+        "--allow-experimental",
+    ];
+    let replayed = replay(dir.path(), &replay_options).output().unwrap();
+    assert!(
+        replayed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replayed.stderr)
+    );
+    assert_eq!(replayed.stdout, result.stdout);
+    let console = replay(dir.path(), &replay_options)
+        .args(["--sink", "console"])
+        .output()
+        .unwrap();
+    assert!(console.status.success());
+    let text = String::from_utf8(console.stdout).unwrap();
+    assert!(
+        text.contains("Request") && text.contains("Response") && text.contains("CDD [decoded]")
+    );
+    assert!(text.contains("/Number = 4660"));
     let mut policy: Value =
         serde_json::from_slice(&fs::read(dir.path().join("policy.json")).unwrap()).unwrap();
     policy["routes"][0]["cdd"] =

@@ -1,5 +1,7 @@
 # ASC + DBC + CDD를 한 CLI에서 사용하기
 
+분석은 아래 `kwp` 예제, 시간에 맞춰 재생하려면 [replay 예제](replay.md)를 사용한다. 두 경로 모두 실제 DBC 메시지와 CDD 진단 필드를 해석한다.
+
 앞서 정리한 기존 Vector CANSystemDemo 샘플을 그대로 읽는다. 생성한 ASC나 복제한 DBC/CDD가 아니다. CDD 기능을 포함해 빌드한 뒤 프로젝트 루트 PowerShell에서 실행한다.
 
 ```powershell

@@ -135,9 +135,15 @@ enum Command {
     Replay {
         #[command(flatten)]
         args: InputArgs,
-        /// Decode signals during replay; repeat for each channel/database.
-        #[arg(long, value_name = "CHANNEL=PATH")]
-        dbc: Vec<String>,
+        #[command(flatten)]
+        definitions: canlog::diagnostics::Definitions,
+        /// Enable streaming diagnostic replay on explicit physical routes.
+        #[arg(long, value_name = "JSON", requires_all = ["policy", "protocol"])]
+        routes: Option<PathBuf>,
+        #[arg(long, value_name = "JSON", requires = "routes")]
+        policy: Option<PathBuf>,
+        #[arg(long, value_enum, requires = "routes")]
+        protocol: Option<canlog::uds::Protocol>,
         #[arg(short, long)]
         output: Option<PathBuf>,
         #[arg(long, value_enum)]
@@ -579,8 +585,145 @@ impl RecordArgs {
     }
 }
 
+fn input_controls(enabled: bool) -> Option<mpsc::Receiver<Control>> {
+    if !enabled {
+        return None;
+    }
+    let (tx, rx) = mpsc::sync_channel(32);
+    std::thread::spawn(move || {
+        for line in io::stdin().lock().lines() {
+            let Ok(line) = line else {
+                break;
+            };
+            let command = match line.trim() {
+                "pause" => Control::Pause,
+                "resume" => Control::Resume,
+                "stop" => Control::Stop,
+                _ => {
+                    eprintln!("control expects pause, resume, or stop");
+                    continue;
+                }
+            };
+            if tx.send(command).is_err() {
+                break;
+            }
+        }
+    });
+    Some(rx)
+}
+fn diagnostic_replay(command: Command) -> i32 {
+    let Command::Replay {
+        args,
+        definitions,
+        routes,
+        policy,
+        protocol,
+        output,
+        format,
+        overwrite,
+        sync,
+        allow_loss,
+        speed,
+        no_wait,
+        repeat,
+        repeat_gap,
+        on_regression,
+        sink,
+        control_stdin,
+    } = command
+    else {
+        unreachable!()
+    };
+    let configuration = (|| -> anyhow::Result<()> {
+        anyhow::ensure!(
+            routes.is_some() && policy.is_some() && protocol.is_some(),
+            "diagnostic replay requires --routes, --policy and --protocol"
+        );
+        anyhow::ensure!(
+            repeat == 1 && repeat_gap == 0,
+            "diagnostic replay currently supports one pass: --repeat 1 and --repeat-gap 0"
+        );
+        anyhow::ensure!(
+            format.is_none() || format == Some(canlog::formats::Format::Jsonl),
+            "diagnostic replay output format must be JSONL"
+        );
+        anyhow::ensure!(
+            allow_loss.is_empty(),
+            "diagnostic replay uses gap quality; --allow-loss is for raw replay"
+        );
+        anyhow::ensure!(
+            sink != Sink::Csv,
+            "diagnostic replay supports JSONL or console, not signal CSV"
+        );
+        anyhow::ensure!(
+            sink != Sink::Console || output.is_none(),
+            "diagnostic console replay uses stdout; omit --output or use --sink jsonl"
+        );
+        anyhow::ensure!(
+            speed.is_finite() && speed > 0.0,
+            "speed must be finite and positive"
+        );
+        anyhow::ensure!(
+            output.is_some() || (!overwrite && !sync && format.is_none()),
+            "file options require --output"
+        );
+        Ok(())
+    })();
+    if let Err(e) = configuration {
+        eprintln!("configuration error: {e:#}");
+        return 2;
+    }
+    let cancel = Cancellation::default();
+    let handler = cancel.clone();
+    if let Err(e) = ctrlc::set_handler(move || handler.cancel()) {
+        eprintln!("cannot install cancel handler: {e}");
+        return 1;
+    }
+    let controls = input_controls(control_stdin);
+    let config = canlog::diagnostics::ReplayConfig {
+        routes: routes.as_deref().unwrap(),
+        policy: policy.as_deref().unwrap(),
+        protocol: protocol.unwrap(),
+        definitions: &definitions,
+        settings: canlog::diagnostics::ReplaySettings {
+            speed,
+            no_wait,
+            on_regression,
+            sink,
+        },
+    };
+    let (report, result) = canlog::diagnostics::replay(
+        &args,
+        &config,
+        &canlog::diagnostics::IsotpOutput { output, overwrite },
+        &cancel,
+        controls.as_ref(),
+    );
+    eprintln!("{}: examined={}, matched={}, rows={}, dbc={:?}, kwp={:?}, uds={:?}, cdd={:?}, scan_complete={}, published={}, elapsed={}ms", report.status, report.frames_examined, report.frames_matched, report.output_rows, report.dbc_counts, report.kwp_counts, report.uds_counts, report.cdd_counts, report.scan_complete, report.published, report.elapsed_ms.unwrap_or(0));
+    match result {
+        Ok(()) => {
+            if report.status == "partial" {
+                3
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            if e.is::<Cancelled>() {
+                130
+            } else {
+                1
+            }
+        }
+    }
+}
 fn main() {
     let cli = Cli::parse();
+    if matches!(&cli.command, Command::Replay { definitions, routes, .. } if definitions.cdd.is_some() || routes.is_some())
+    {
+        std::process::exit(diagnostic_replay(cli.command));
+    }
     if matches!(
         &cli.command,
         Command::Index { .. }
@@ -632,7 +775,10 @@ fn main() {
         }
         Command::Replay {
             args,
-            dbc,
+            definitions,
+            routes: _,
+            policy: _,
+            protocol: _,
             output,
             format,
             overwrite,
@@ -666,7 +812,7 @@ fn main() {
                 args,
                 Operation::Replay {
                     write,
-                    dbc,
+                    dbc: definitions.dbc,
                     speed,
                     no_wait,
                     repeat,
@@ -688,31 +834,7 @@ fn main() {
         eprintln!("cannot install cancel handler: {e}");
         std::process::exit(1);
     }
-    let controls = if control {
-        let (tx, rx) = mpsc::sync_channel(32);
-        std::thread::spawn(move || {
-            for line in io::stdin().lock().lines() {
-                let Ok(line) = line else {
-                    break;
-                };
-                let command = match line.trim() {
-                    "pause" => Control::Pause,
-                    "resume" => Control::Resume,
-                    "stop" => Control::Stop,
-                    _ => {
-                        eprintln!("control expects pause, resume, or stop");
-                        continue;
-                    }
-                };
-                if tx.send(command).is_err() {
-                    break;
-                }
-            }
-        });
-        Some(rx)
-    } else {
-        None
-    };
+    let controls = input_controls(control);
     let (report, result) = run(args, operation, cancel, controls);
     eprintln!(
         "{}: read={}, selected={}, written={}, issues={}, finalized={}, published={}, elapsed={}ms",
