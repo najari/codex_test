@@ -17,9 +17,12 @@ use std::{
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct StreamOutput {
-    /// JSON Lines destination; omitted means stdout.
+    /// JSONL/CSV destination; omitted means stdout.
     #[arg(short, long)]
     pub output: Option<PathBuf>,
+    /// Default JSONL; .csv destinations also select CSV. CSV requires DBC decoding.
+    #[arg(long, value_enum)]
+    pub format: Option<crate::signal_export::SignalFormat>,
     #[arg(long)]
     pub overwrite: bool,
 }
@@ -39,6 +42,9 @@ pub struct AnalysisReport {
     pub index: Option<Manifest>,
     pub frames_examined: u64,
     pub frames_selected: u64,
+    pub output_rows: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub export_schema: Option<crate::signal_export::CsvSchema>,
     pub issues_selected: u64,
     pub issue_counts: BTreeMap<String, u64>,
     pub issue_examples: Vec<Issue>,
@@ -151,6 +157,15 @@ fn execute(
     report: &mut AnalysisReport,
 ) -> Result<()> {
     let filter = Filter::new(args.clone())?;
+    let export_format = crate::signal_export::output_format(
+        output_args.output.as_deref(),
+        output_args.format.map(Into::into),
+    )?;
+    ensure!(
+        export_format != crate::formats::Format::Csv || bindings.is_some(),
+        "signal CSV requires DBC decoding; use export --format csv for raw frames"
+    );
+    report.export_schema = crate::signal_export::schema(export_format);
     let processing = index::Processing::of(args, cancel)?;
     report.processing = Some(processing.clone());
     ensure!(
@@ -190,10 +205,11 @@ fn execute(
         .map(|p| AtomicOutput::new(p, &args.input, output_args.overwrite))
         .transpose()?;
     let mut writer: Box<dyn Write> = if let Some(a) = &atomic {
-        Box::new(a.file()?)
+        Box::new(std::io::BufWriter::new(a.file()?))
     } else {
         Box::new(io::stdout())
     };
+    crate::signal_export::write_header(&mut writer, export_format)?;
     let mut indexed = index_path
         .map(|p| IndexedReader::new(p, args, cancel))
         .transpose()?;
@@ -268,14 +284,15 @@ fn execute(
                         .decode_counts
                         .entry(decoded.status.clone())
                         .or_default() += 1;
-                    serde_json::to_writer(&mut writer, &decoded)?;
-                    writeln!(writer)?;
+                    report.output_rows +=
+                        crate::signal_export::write_frame(&mut writer, &decoded, export_format)?;
                 } else {
                     crate::formats::jsonl::write_json_record(
                         &mut writer,
                         &record.frame,
                         &record.location,
                     )?;
+                    report.output_rows += 1;
                 }
             }
             ReadItem::Issue(issue) => {

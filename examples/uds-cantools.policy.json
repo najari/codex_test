@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "routes": [{
+    "route": "ecu", "protocol": "uds2013",
+    "p2_ns": 50000000, "p2_star_ns": 100000000,
+    "transaction_max_duration_ns": 500000000,
+    "cdd": {
+      "path": "C:/Users/admin/claude/cdd_rust_engine/examples/cantools/cdd/example-diddatarefs.cdd",
+      "ecu": "SBS_Test", "variant": "Base_Variant",
+      "allow_experimental": true
+    }
+  }]
+}

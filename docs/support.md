@@ -16,7 +16,7 @@
 | CAN error | ASC ErrorFrame 및 BLF 2/73/104를 별도 CanError issue로 보고 | 같은 포맷의 `--preserve-records`에서 원문 보존; 교차 포맷 의미 변환 미지원 |
 | Native event/object | 보존 모드에서 bounded 원문과 위치·알려진 좌표를 전달 | ASC→ASC / BLF→BLF의 순서·기록 내용 보존 |
 | JSONL | schema version 1, validated frame, 선택적 source_location | frame schema version 1 |
-| CSV | 미지원 | typed frame export |
+| CSV | 미지원 | raw frame export 및 DBC typed signal export |
 
 Standard ID는 0–0x7FF, Extended는 0–0x1FFFFFFF다. Classic의 DLC 9–15는 payload 8 bytes와 구분하여 원시 코드를 유지한다. Remote에는 payload가 없고 FD Remote는 거부한다. DLC와 선언/실제 payload 길이가 다르면 padding이나 truncation으로 정상화하지 않는다.
 
@@ -52,6 +52,7 @@ ID 매핑은 schema version 1 JSON의 channel/name 쌍이 정확히 일치할 �
 단일 ASC/BLF의 SQLite sparse index와 실제 Rust DBC 해석은 구현되어 있다. 명령과 범위는 [index-dbc.md](index-dbc.md)를 따른다.
 multi-source workspace/assignment 저장과 persistent signal cache도 구현되어 있다. [workspace.md](workspace.md)에 저장 규칙·quota·정합성과 명령을 정리했다.
 같은 내용의 source 이동 재연결도 `workspace relink`로 제공한다. 현재/등록 원본의 SHA-256를 확인하며 과거 경로의 index/cache는 그대로 재사용하지 않는다.
-장비 transport adapter, error/event의 typed 분석과 교차 포맷 Writer, CDD·진단, MF4, multi-file clock/merge, GUI는 후속 확장이다. 보존 기록의 JSONL/CSV export, 반복 time shift, arbitrary ASC dialect도 별도 확장이 필요하다.
+DBC decode/workspace decode/replay는 versioned 신호 CSV도 제공한다. [signal-csv.md](signal-csv.md)에 null·raw 정밀도·metadata·상태/row 규칙을 정리했다. 후속 우선순위는 [remaining-work.md](remaining-work.md)를 따른다.
+Classic 물리 경로의 수동 ISO-TP 재조립은 [isotp.md](isotp.md), 물리 UDS transaction과 선택적 pinned CDD facade는 [uds-cdd.md](uds-cdd.md)에 지원 profile·품질·CLI를 정리했다. CAN FD/functional 및 추가 UDS/CDD profile, 장비 transport adapter, error/event의 typed 분석과 교차 포맷 Writer, MF4, multi-file clock/merge, GUI는 후속 확장이다. 보존 기록의 JSONL/CSV export, 반복 time shift, arbitrary ASC dialect도 별도 확장이 필요하다.
 
 독립 비교 근거: [python-can 4.6.1 ASC 구현](https://python-can.readthedocs.io/en/4.6.1/_modules/can/io/asc.html), [BLF 구현](https://python-can.readthedocs.io/en/4.6.1/_modules/can/io/blf.html). python-can의 epoch float64 시간 양자화와 FD zero-length ASC를 remote로 표시하는 차이는 검증 report에 별도로 기록한다.

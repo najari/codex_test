@@ -613,6 +613,7 @@ fn cancellation_before_cache_setup_preserves_existing_output_and_cache() {
         Some(&[]),
         &canlog::analysis::StreamOutput {
             output: Some(output.clone()),
+            format: None,
             overwrite: true,
         },
         false,

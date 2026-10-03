@@ -25,7 +25,7 @@ query/decode는 기존 시간·채널·ID·ID 종류·방향 필터를 지원하
 query JSONL은 `view`와 같은 `schema_version/frame/source_location` 구조다.
 output 생략 시 stdout을 사용한다. `--limit` 때문에 남은 선택 범위를 확인하지 못하면 `selection_complete=false`다.
 
-`replay INPUT --dbc CHANNEL=PATH`도 같은 compiled decoder를 사용한다. 시간 대기·속도·반복·pause/resume/stop은 기존 replay scheduler를 따른다. JSONL은 `decode`와 같은 typed `decoded_frame`이며 `--sink console`은 메시지와 신호값을 표시한다. DBC 재생의 파일 출력은 JSONL만 지원한다. 사용법과 샘플 검증은 [replay-dbc-validation.md](replay-dbc-validation.md)에 있다.
+`replay INPUT --dbc CHANNEL=PATH`도 같은 compiled decoder를 사용한다. 시간 대기·속도·반복·pause/resume/stop은 기존 replay scheduler를 따른다. JSONL은 `decode`와 같은 typed `decoded_frame`이며 `--sink console`은 메시지와 신호값을 표시한다. DBC 재생의 파일 출력은 JSONL 또는 신호 CSV를 지원한다. 사용법과 샘플 검증은 [replay-dbc-validation.md](replay-dbc-validation.md)에 있다.
 
 ## 인덱스 계약
 
@@ -65,7 +65,7 @@ warning은 assignment report에 보존한다. 독립 신호 pseudo-message `0xC0
 
 decode JSONL은 `decoded_frame` envelope이며 일반 frame JSONL 입력과 구별된다.
 persistent typed cache와 workspace binding manifest는 [workspace](workspace.md)에서 제공한다.
-signal CSV/Parquet export는 후속 범위다.
+`decode --format csv` 또는 `.csv` 파일 출력은 [versioned 신호 CSV](signal-csv.md)를 지원한다. header 33개 column, 신호당 1행, typed raw/physical/null/status와 원본 위치를 보존하며 report를 metadata sidecar로 사용할 수 있다. Index query는 JSONL 전용이며 raw frame CSV는 기존 `export --format csv`를 사용한다. Parquet export는 후속 범위다.
 
 ## 독립 검증
 

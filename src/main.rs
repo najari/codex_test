@@ -20,6 +20,32 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect CDD ECU/variant qualifiers and definitions using the optional pinned engine.
+    CddInfo {
+        input: PathBuf,
+        #[arg(long)]
+        allow_experimental: bool,
+    },
+    /// Match passive physical UDS requests/responses with explicit timing policy.
+    Uds {
+        #[command(flatten)]
+        args: InputArgs,
+        #[arg(long, value_name = "JSON")]
+        routes: PathBuf,
+        #[arg(long, value_name = "JSON")]
+        policy: PathBuf,
+        #[command(flatten)]
+        output: canlog::diagnostics::IsotpOutput,
+    },
+    /// Passively reconstruct Classic CAN ISO-TP payloads on explicit physical routes.
+    Isotp {
+        #[command(flatten)]
+        args: InputArgs,
+        #[arg(long, value_name = "JSON")]
+        routes: PathBuf,
+        #[command(flatten)]
+        output: canlog::diagnostics::IsotpOutput,
+    },
     /// Manage independent logs, stored DBC bindings and signal caches.
     Workspace {
         #[command(subcommand)]
@@ -370,6 +396,42 @@ fn extended(command: Command) -> i32 {
                 index,
                 output,
             } => analysis_stream(args, index, Some(dbc), output, &cancel),
+            Command::Isotp {
+                args,
+                routes,
+                output,
+            } => {
+                let (report, result) =
+                    canlog::diagnostics::analyze(&args, &routes, &output, &cancel);
+                eprintln!("{}: examined={}, matched={}, rows={}, counts={:?}, scan_complete={}, published={}", report.status, report.frames_examined, report.frames_matched, report.output_rows, report.counts, report.scan_complete, report.published);
+                result?;
+                Ok(if report.status == "partial" { 3 } else { 0 })
+            }
+            Command::Uds {
+                args,
+                routes,
+                policy,
+                output,
+            } => {
+                let (report, result) =
+                    canlog::diagnostics::analyze_uds(&args, &routes, &policy, &output, &cancel);
+                eprintln!("{}: examined={}, matched={}, rows={}, uds={:?}, scan_complete={}, published={}",report.status,report.frames_examined,report.frames_matched,report.output_rows,report.uds_counts,report.scan_complete,report.published);
+                result?;
+                Ok(if report.status == "partial" { 3 } else { 0 })
+            }
+            Command::CddInfo {
+                input,
+                allow_experimental,
+            } => {
+                let info = canlog::cdd::inspect(&input, allow_experimental, &cancel)?;
+                serde_json::to_writer_pretty(std::io::stdout(), &info)?;
+                println!();
+                Ok(if info["load_error_count"].as_u64().unwrap_or(0) > 0 {
+                    3
+                } else {
+                    0
+                })
+            }
             _ => unreachable!("only analysis commands reach this dispatcher"),
         }
     })();
@@ -478,12 +540,22 @@ fn main() {
     let cli = Cli::parse();
     if matches!(
         &cli.command,
-        Command::Index { .. } | Command::Decode { .. } | Command::Workspace { .. }
+        Command::Index { .. }
+            | Command::Decode { .. }
+            | Command::Workspace { .. }
+            | Command::Isotp { .. }
+            | Command::Uds { .. }
+            | Command::CddInfo { .. }
     ) {
         std::process::exit(extended(cli.command));
     }
     let (args, operation, control) = match cli.command {
-        Command::Index { .. } | Command::Decode { .. } | Command::Workspace { .. } => {
+        Command::Index { .. }
+        | Command::Decode { .. }
+        | Command::Workspace { .. }
+        | Command::Isotp { .. }
+        | Command::Uds { .. }
+        | Command::CddInfo { .. } => {
             unreachable!("handled by analysis dispatcher")
         }
         Command::Info { args, scan } => (args, Operation::Info { scan }, false),

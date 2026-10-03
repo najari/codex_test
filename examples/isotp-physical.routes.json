@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "max_payload_bytes": 4095,
+  "max_total_payload_bytes": 262144,
+  "max_sessions": 64,
+  "routes": [
+    {
+      "name": "comfort-demo",
+      "channel": 1,
+      "kind": "physical",
+      "profile": "classic",
+      "addressing": "normal",
+      "request": { "id": 1792, "extended": false },
+      "response": { "id": 1536, "extended": false },
+      "timeout_ns": 1000000000
+    },
+    {
+      "name": "engine-demo",
+      "channel": 2,
+      "kind": "physical",
+      "profile": "classic",
+      "addressing": "normal",
+      "request": { "id": 512, "extended": false },
+      "response": { "id": 1024, "extended": false },
+      "timeout_ns": 1000000000
+    }
+  ]
+}

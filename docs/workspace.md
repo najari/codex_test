@@ -138,7 +138,9 @@ batch는 최대 128 rows/2 MiB, 단일 row는 최대 2 MiB다. LRU eviction은 �
 
 manifest 상한은 1 MiB/4,096 logs이며 로그 이름은 128 UTF-8 bytes 이내의 문자·숫자·`_-.`이다.
 DBC assignment 상한 16개/각 파일 32 MiB와 parser resource limit을 그대로 적용한다.
-resume/crash scan 복구, signal CSV/Parquet, multi-clock merge,
+`workspace decode --format csv` 및 `.csv` 파일 출력은 신호 CSV를 지원한다. JSONL과 CSV는 같은 typed cache를 사용하며 cache hit에서도 원본 위치·issue·상태를 다시 확인한다. null/정밀도/sidecar 규칙은 [signal-csv.md](signal-csv.md)를 따른다.
+
+resume/crash scan 복구, Parquet, multi-clock merge,
 ISO-TP/UDS/CDD, MF4, GUI와 실제 CAN transport는 후속 작업이다.
 
 ## 검증 재현

@@ -238,7 +238,6 @@ fn incompatible_formats_invalid_dbc_and_database_alias_are_protected() {
     for (name, extra) in [
         ("out.asc", vec![]),
         ("out.blf", vec![]),
-        ("out.csv", vec![]),
         ("out.jsonl", vec!["--preserve-records"]),
     ] {
         let output = dir.path().join(name);

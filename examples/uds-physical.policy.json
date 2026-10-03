@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "routes": [{
+    "route": "ecu", "protocol": "uds2013",
+    "p2_ns": 50000000, "p2_star_ns": 100000000,
+    "transaction_max_duration_ns": 500000000
+  }]
+}

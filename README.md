@@ -31,14 +31,18 @@ Windows에는 Rust MSVC toolchain 1.88 이상, Visual Studio C++ Build Tools, Wi
 | `record --input INPUT -o OUTPUT` | 파일 또는 JSONL stdin을 새 로그로 기록 |
 | `replay INPUT` | 기본 1배속·1회, JSONL stdout으로 재생 |
 | `replay INPUT --dbc CHANNEL=PATH` | 재생 시간에 맞춰 DBC 신호 출력; JSONL 또는 `--sink console` |
+| `uds INPUT --routes ROUTES --policy POLICY` | 물리 ISO-TP 기반 UDS 요청·응답·pending과 선택적 CDD 해석 |
+| `cdd-info INPUT --allow-experimental` | CDD ECU·variant·서비스·DID·diagnostics 검사; `-Cdd` 빌드 필요 |
 | `index build INPUT -o INDEX` / `index info INDEX` | 원본 payload를 복제하지 않는 SQLite 검색 인덱스 작성/조회 |
 | `index query INPUT --index INDEX` | 원본을 확인하고 선택 chunk부터 읽는 JSONL 검색 |
-| `decode INPUT --dbc CHANNEL=PATH` | 실제 Rust DBC 엔진을 통한 typed 신호 해석; `--index` 지원 |
+| `decode INPUT --dbc CHANNEL=PATH` | 실제 Rust DBC 엔진을 통한 typed 신호 해석; `--index`, JSONL/신호 CSV 지원 |
 | `workspace create/add/relink/bind/index/query/decode` | 여러 로그 등록·이동 재연결, DBC 연결 저장, managed index와 영속 신호 캐시 |
 | `workspace cache ROOT info/clear/limit` | 캐시 조회·정리·payload 용량 제한 |
+| `isotp INPUT --routes ROUTES.json` | Classic CAN의 명시적 물리 경로를 수동 재조립; JSONL payload/FC/issue와 report |
 
 인덱스 생성·시간 검색·채널별 DBC 지정 예제와 정확한 지원 범위는 [SQLite·DBC 사용법](docs/index-dbc.md)을 따른다.
 다중 파일 등록과 캐시를 사용하는 실제 샘플 명령은 [workspace 사용법](docs/workspace.md)에 있다.
+진단 로그의 payload 재조립과 지원 경계는 [ISO-TP 사용법](docs/isotp.md)에 있다.
 
 `INPUT=-`는 `--input-format jsonl`과 함께 사용한다. ASC·BLF·JSONL은 입력/출력, CSV는 출력만 지원한다. 인식되지 않는 header는 명시적 input format이 필요하다. 형식 지원 범위는 [지원 문서](docs/support.md)에 정리했다.
 
@@ -62,7 +66,16 @@ DBC를 연결해 재생하려면 `--dbc CHANNEL=PATH`를 반복 지정한다. �
 .\dist\canlog.exe replay .\can_example\web_downloads\2026-10-03\py_canoe_demo\demo_log.blf --dbc '1=.\can_example\web_downloads\2026-10-03\py_canoe_demo\easy.dbc' --dbc '2=.\can_example\web_downloads\2026-10-03\py_canoe_demo\easy.dbc' --sink console --unsupported skip --on-regression immediate
 ```
 
-`--no-wait`를 추가하면 시간 대기 없이 해석한다. JSONL stdout과 `-o signals.jsonl`은 `decode`와 같은 `decoded_frame` 구조다. 반복 재생은 `record.frame.timestamp_ns`에 회차 offset을 적용하고 `record.location`은 원본 위치를 유지한다. DBC 미지정 채널·미등록 ID·길이/형식 불일치도 프레임을 남기고 상태를 표시하며 종료 코드 3과 report의 `decode_counts`로 집계한다. DBC 지정 시 파일 출력은 JSONL만 지원하고 `--preserve-records`는 사용할 수 없다. 파일 출력의 미지원 기록·날짜/부가 필드 손실은 기존 `--allow-loss` 정책을 따른다. 사용 중 DBC가 변경되거나 취소되면 임시 출력은 게시하지 않는다. 자세한 재현 예제는 [DBC 재생 검증](docs/replay-dbc-validation.md)을 참고한다.
+`--no-wait`를 추가하면 시간 대기 없이 해석한다. JSONL stdout과 `-o signals.jsonl`은 `decode`와 같은 `decoded_frame` 구조다. 반복 재생은 `record.frame.timestamp_ns`에 회차 offset을 적용하고 `record.location`은 원본 위치를 유지한다. DBC 미지정 채널·미등록 ID·길이/형식 불일치도 프레임을 남기고 상태를 표시하며 종료 코드 3과 report의 `decode_counts`로 집계한다. DBC 지정 시 파일 출력은 JSONL 또는 신호 CSV를 지원하고 `--preserve-records`는 사용할 수 없다. 파일 출력의 미지원 기록·날짜/부가 필드 손실은 기존 `--allow-loss` 정책을 따른다. 사용 중 DBC가 변경되거나 취소되면 임시 출력은 게시하지 않는다. 자세한 재현 예제는 [DBC 재생 검증](docs/replay-dbc-validation.md)을 참고한다.
+
+DBC 신호를 CSV로 저장할 때는 `decode --format csv`, `workspace decode --format csv` 또는 `replay --dbc ... --sink csv`를 사용한다. 파일 확장자가 `.csv`이면 신호 CSV를 자동 선택한다.
+
+```powershell
+.\dist\canlog.exe decode .\can_example\web_downloads\2026-10-03\atemall_motorola\motorola_matrix.asc --dbc '1=.\can_example\web_downloads\2026-10-03\atemall_motorola\motorola_matrix.dbc' -o .\motorola-signals.csv --report .\motorola-signals.metadata.json
+.\dist\canlog.exe replay .\can_example\web_downloads\2026-10-03\atemall_motorola\motorola_matrix.asc --dbc '1=.\can_example\web_downloads\2026-10-03\atemall_motorola\motorola_matrix.dbc' --no-wait -o .\motorola-replay-signals.csv
+```
+
+신호 CSV는 신호당 1행이며 비활성 신호와 신호를 해석할 수 없는 프레임도 상태를 남긴다. 큰 정수는 정확한 decimal 문자열, null은 `\N`, non-null 값의 선행 backslash는 한 개를 추가해 구분한다. report는 schema·DBC·원본/clock metadata를 포함하는 선택적 sidecar다. CSV/JSONL 출력 형태는 typed 신호 캐시의 identity를 바꾸지 않는다. 정확한 column/null/metadata 규칙과 검증은 [신호 CSV 사용법](docs/signal-csv.md)에 있다.
 
 ## Error/event 보존과 ASC 이름 매핑
 
@@ -140,3 +153,7 @@ python -m venv .\target\verify-env
 독립 비교용 Python은 CLI 런타임 의존성이 아니다. 스크립트는 로컬 샘플을 수정하지 않고 `artifacts/`에 checksum manifest·CAN 왕복·외부 비교·배속/제어·메모리 측정 결과를 생성한다. Windows benchmark는 peak working set을 사용한다. 로컬 샘플은 재배포 권한이 확인되지 않았으므로 Git/CI에서 제외하며, CI는 프로젝트 생성 fixture와 단위·통합 테스트를 실행한다.
 
 [기존 검증 결과](docs/validation.md), [추가 샘플·ASC 호환성 검증](docs/corpus-validation.md), [SQLite·DBC 검증](docs/index-dbc-validation.md), [workspace 검증](docs/workspace-validation.md), [재연결 검증](docs/relink-validation.md), [원래 구현 계획](docs/implementation-plan.md), [장기 설계](docs/canlog-rs-design.md)를 참고한다.
+
+현재 완료 범위와 남은 우선순위는 [후속 작업 목록](docs/remaining-work.md)에 정리했다.
+
+UDS/CDD의 예제 CLI, 선택적 빌드와 지원 경계는 [UDS·CDD 문서](docs/uds-cdd.md)에 정리했다. `examples/uds-cantools.policy.json`은 제공된 로컬 CDD의 ECU·variant를 명시한다.

@@ -27,7 +27,7 @@
 - pause/resume/stop, Ctrl+C, 시간 역행 검사, frame limit는 기존 scheduler와 선택 루프를 사용한다. report의 `scan_complete=false`는 limit로 전체 입력을 읽지 못했음을 뜻한다.
 - `no_database`, `no_message`, `length_mismatch`, `format_mismatch`, `signal_error` 프레임도 출력한다. 미지원 입력 issue와 별도로 `decode_counts`에 집계하고 부분 성공 코드 3을 반환한다. remote 프레임은 `remote`이며 신호를 해석하지 않는다.
 - report에는 engine revision과 DBC channel/path/SHA-256/메시지 수가 포함된다. DBC는 실행당 한 번 load/compile하고 반복마다 재사용하며 종료 전에 다시 SHA-256을 확인한다.
-- 신호를 포함하는 파일 출력은 JSONL만 지원한다. ASC/BLF/CSV와 `--preserve-records`의 조합은 명시적으로 거부한다. `-o`를 사용하면 파일에 JSONL을 쓰며 `--sink`는 stdout 모드에 적용한다.
+- 신호를 포함하는 파일 출력은 JSONL 또는 [versioned 신호 CSV](signal-csv.md)를 지원한다. ASC/BLF와 `--preserve-records`의 조합은 명시적으로 거부한다. `--sink csv`는 CSV stdout이며 `-o`를 사용하면 파일 포맷을 따르고 `--sink`는 stdout 모드에 적용한다. CSV의 `output_rows`는 신호/상태 행 수이고 `frames_written`은 frame 수다.
 - 출력은 임시 파일에 쓰고 flush/검증 성공 후 게시한다. 실패·취소·DBC 변경은 기존 출력을 보존한다. stdout은 이미 출력된 행을 되돌릴 수 없으며 최종 상태는 stderr/report를 따른다. DBC 원본과 출력의 path/hardlink 충돌은 거부한다.
 
 ## 검증 재현

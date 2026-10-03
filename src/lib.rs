@@ -1,11 +1,16 @@
 pub mod analysis;
 pub mod app;
 pub mod cache;
+pub mod cdd;
 pub mod core;
 pub mod dbc;
+pub mod diagnostics;
 pub mod formats;
 pub mod id_map;
 pub mod index;
+pub mod isotp;
 pub mod output;
 pub mod playback;
+pub mod signal_export;
+pub mod uds;
 pub mod workspace;

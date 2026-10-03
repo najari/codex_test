@@ -1,4 +1,4 @@
-param([switch]$Test, [switch]$Release, [switch]$TestEngine, [string]$EngineSamples)
+param([switch]$Test, [switch]$Release, [switch]$TestEngine, [string]$EngineSamples, [switch]$Cdd)
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path $PSScriptRoot -Parent
 $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
@@ -19,6 +19,7 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
 }
 Push-Location $taskRoot
 try {
+    $taskFeatures = if ($Cdd) { @('--features', 'cdd') } else { @() }
     if ($TestEngine) {
         $taskMetadata = & cargo metadata --locked --format-version 1 | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0) { throw 'Dependency metadata failed' }
@@ -54,12 +55,12 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Pinned DBC engine tests failed' }
     }
     if ($Test) {
-        & cargo test --locked
+        & cargo test --locked @taskFeatures
         if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
-        & cargo clippy --locked --all-targets -- -D warnings
+        & cargo clippy --locked @taskFeatures --all-targets -- -D warnings
         if ($LASTEXITCODE -ne 0) { throw 'Clippy failed' }
     }
-    if ($Release) { & cargo build --locked --release } else { & cargo build --locked }
+    if ($Release) { & cargo build --locked @taskFeatures --release } else { & cargo build --locked @taskFeatures }
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
     if ($Release) {
         $distribution = Join-Path $taskRoot 'dist'

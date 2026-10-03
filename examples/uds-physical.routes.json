@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "routes": [{
+    "name": "ecu", "channel": 1, "kind": "physical", "profile": "classic",
+    "addressing": "normal",
+    "request": {"id": 2016, "extended": false},
+    "response": {"id": 2024, "extended": false},
+    "timeout_ns": 1000000000
+  }]
+}

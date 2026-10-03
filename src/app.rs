@@ -32,6 +32,7 @@ pub enum Regression {
 pub enum Sink {
     Jsonl,
     Console,
+    Csv,
 }
 
 #[derive(Debug, Clone, clap::Args)]
@@ -190,6 +191,9 @@ pub struct Report {
     pub frames_read: u64,
     pub frames_selected: u64,
     pub frames_written: u64,
+    pub output_rows: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub export_schema: Option<crate::signal_export::CsvSchema>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine_revision: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -282,6 +286,7 @@ pub fn validate(args: &InputArgs, op: &Operation) -> Result<()> {
         repeat,
         gap,
         dbc,
+        sink,
         ..
     } = op
     {
@@ -293,6 +298,10 @@ pub fn validate(args: &InputArgs, op: &Operation) -> Result<()> {
             args.input != "-" || *repeat == 1,
             "stdin cannot be reopened for repeat"
         );
+        ensure!(
+            *sink != Sink::Csv || !dbc.is_empty(),
+            "--sink csv requires --dbc"
+        );
         if !dbc.is_empty() {
             ensure!(
                 !args.preserve_records,
@@ -300,8 +309,11 @@ pub fn validate(args: &InputArgs, op: &Operation) -> Result<()> {
             );
             if let Some(w) = op.write_args() {
                 ensure!(
-                    formats::output_format(&w.output, w.format)? == Format::Jsonl,
-                    "DBC replay file output requires JSONL (decoded_frame records)"
+                    matches!(
+                        formats::output_format(&w.output, w.format)?,
+                        Format::Jsonl | Format::Csv
+                    ),
+                    "DBC replay file output requires JSONL or signal CSV"
                 );
             }
         }
@@ -428,6 +440,14 @@ fn execute(
     let output_format = writing
         .map(|w| formats::output_format(&w.output, w.format))
         .transpose()?;
+    if let Operation::Replay {
+        dbc,
+        sink: Sink::Csv,
+        ..
+    } = op
+    {
+        ensure!(!dbc.is_empty(), "--sink csv requires --dbc");
+    }
     let mut decoder = match op {
         Operation::Replay { dbc, .. } if !dbc.is_empty() => {
             ensure!(
@@ -435,8 +455,9 @@ fn execute(
                 "DBC replay cannot preserve opaque native records"
             );
             ensure!(
-                output_format.is_none() || output_format == Some(Format::Jsonl),
-                "DBC replay file output requires JSONL (decoded_frame records)"
+                output_format.is_none()
+                    || matches!(output_format, Some(Format::Jsonl | Format::Csv)),
+                "DBC replay file output requires JSONL or signal CSV"
             );
             // Load once, before opening any output. The compiled codec is reused
             // across replay cycles; the scheduler remains responsible for timing.
@@ -507,6 +528,25 @@ fn execute(
         .filter(|_| decoder.is_some())
         .map(|o| o.file().map(BufWriter::new))
         .transpose()?;
+    let decoded_format = output_format.unwrap_or(
+        if matches!(
+            op,
+            Operation::Replay {
+                sink: Sink::Csv,
+                ..
+            }
+        ) {
+            Format::Csv
+        } else {
+            Format::Jsonl
+        },
+    );
+    if decoder.is_some() {
+        report.export_schema = crate::signal_export::schema(decoded_format);
+        if let Some(writer) = &mut decoded_writer {
+            crate::signal_export::write_header(writer, decoded_format)?;
+        }
+    }
     let (repeat, gap) = if let Operation::Replay { repeat, gap, .. } = op {
         (*repeat, *gap)
     } else {
@@ -541,6 +581,9 @@ fn execute(
     }
     let mut previous = None;
     let mut stdout = io::stdout().lock();
+    if decoder.is_some() && writing.is_none() {
+        crate::signal_export::write_header(&mut stdout, decoded_format)?;
+    }
     let limit = if let Operation::View { unlimited: false } = op {
         args.limit.or(Some(100))
     } else {
@@ -695,7 +738,11 @@ fn execute(
                         })?;
                         increment(&mut report.decode_counts, decoded.status.clone())?;
                         if let Some(writer) = &mut decoded_writer {
-                            write_decoded_json(writer, &decoded)?;
+                            report.output_rows += crate::signal_export::write_frame(
+                                writer,
+                                &decoded,
+                                decoded_format,
+                            )?;
                             report.frames_written += 1;
                         } else {
                             if matches!(
@@ -707,7 +754,11 @@ fn execute(
                             ) {
                                 write_decoded_console(&mut stdout, &decoded)?;
                             } else {
-                                write_decoded_json(&mut stdout, &decoded)?;
+                                report.output_rows += crate::signal_export::write_frame(
+                                    &mut stdout,
+                                    &decoded,
+                                    decoded_format,
+                                )?;
                             }
                             stdout.flush()?;
                         }
@@ -846,12 +897,6 @@ fn execute(
         report.published = true;
         report.durable = w.sync;
     }
-    Ok(())
-}
-
-fn write_decoded_json(out: &mut impl Write, decoded: &crate::dbc::DecodedFrame) -> Result<()> {
-    serde_json::to_writer(&mut *out, decoded)?;
-    writeln!(out)?;
     Ok(())
 }
 
