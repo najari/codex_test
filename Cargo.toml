@@ -18,7 +18,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 tempfile = "3"
 rusqlite = { version = "0.40", features = ["bundled"] }
 sha2 = "0.10"
-candb-engine = { git = "https://github.com/najari/candb-csharp-clone", rev = "da64ad9ccf10237fce0993d1b83f460416d3da53" }
+candb-engine = { git = "https://github.com/najari/candb-csharp-clone", rev = "c51f18848dc4e32afd96b1a6e5bc975da70c6828" }
 
 [dev-dependencies]
 

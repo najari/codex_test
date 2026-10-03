@@ -25,6 +25,8 @@ query/decode는 기존 시간·채널·ID·ID 종류·방향 필터를 지원하
 query JSONL은 `view`와 같은 `schema_version/frame/source_location` 구조다.
 output 생략 시 stdout을 사용한다. `--limit` 때문에 남은 선택 범위를 확인하지 못하면 `selection_complete=false`다.
 
+`replay INPUT --dbc CHANNEL=PATH`도 같은 compiled decoder를 사용한다. 시간 대기·속도·반복·pause/resume/stop은 기존 replay scheduler를 따른다. JSONL은 `decode`와 같은 typed `decoded_frame`이며 `--sink console`은 메시지와 신호값을 표시한다. DBC 재생의 파일 출력은 JSONL만 지원한다. 사용법과 샘플 검증은 [replay-dbc-validation.md](replay-dbc-validation.md)에 있다.
+
 ## 인덱스 계약
 
 - SQLite에는 `manifest`, `chunks`, `issues`만 저장한다. raw payload를 복제하지 않는다.
@@ -41,7 +43,8 @@ stale 검출을 위해 질의 전후 전체 원본을 SHA-256으로 읽는다. �
 
 ## DBC 계약
 
-Git dependency와 lockfile은 `najari/candb-csharp-clone`의 `da64ad9ccf10237fce0993d1b83f460416d3da53`을 고정한다.
+Git dependency와 lockfile은 `najari/candb-csharp-clone`의 `c51f18848dc4e32afd96b1a6e5bc975da70c6828`을 고정한다.
+기존 `da64ad9`에서 업데이트한 API·결과·캐시 호환성 검증은 [engine-update-validation.md](engine-update-validation.md)에 정리했다.
 `Document::from_bytes`, `analysis::check`, `CompiledMessage::compile/decode`, `Scratch`를 재사용하며 parser/bit decoder/multiplex evaluator를 복제하지 않는다.
 Python/cantools는 독립 검증용이고 실행 파일의 의존성이 아니다.
 

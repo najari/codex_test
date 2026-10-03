@@ -15,7 +15,7 @@ use std::{
     path::PathBuf,
 };
 
-pub const ENGINE_REVISION: &str = "da64ad9ccf10237fce0993d1b83f460416d3da53";
+pub const ENGINE_REVISION: &str = "c51f18848dc4e32afd96b1a6e5bc975da70c6828";
 pub const ADAPTER_ID: &str = "canlog-dbc-signals-v2";
 const MAX_DBC_BYTES: u64 = 32 * 1024 * 1024;
 

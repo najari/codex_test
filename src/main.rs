@@ -94,6 +94,9 @@ enum Command {
     Replay {
         #[command(flatten)]
         args: InputArgs,
+        /// Decode signals during replay; repeat for each channel/database.
+        #[arg(long, value_name = "CHANNEL=PATH")]
+        dbc: Vec<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
         #[arg(long, value_enum)]
@@ -512,6 +515,7 @@ fn main() {
         }
         Command::Replay {
             args,
+            dbc,
             output,
             format,
             overwrite,
@@ -545,6 +549,7 @@ fn main() {
                 args,
                 Operation::Replay {
                     write,
+                    dbc,
                     speed,
                     no_wait,
                     repeat,
@@ -605,6 +610,9 @@ fn main() {
     );
     if !report.losses.is_empty() {
         eprintln!("losses: {:?}", report.losses);
+    }
+    if !report.decode_counts.is_empty() {
+        eprintln!("DBC frame statuses: {:?}", report.decode_counts);
     }
     if report.native_records_written > 0 {
         eprintln!(

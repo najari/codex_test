@@ -8,7 +8,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{self, Write},
+    io::{self, BufWriter, Write},
     path::PathBuf,
     sync::mpsc::Receiver,
 };
@@ -101,6 +101,7 @@ pub enum Operation {
     Write(WriteArgs),
     Replay {
         write: Option<WriteArgs>,
+        dbc: Vec<String>,
         speed: f64,
         no_wait: bool,
         repeat: u32,
@@ -189,6 +190,12 @@ pub struct Report {
     pub frames_read: u64,
     pub frames_selected: u64,
     pub frames_written: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine_revision: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub databases: Vec<crate::dbc::Assignment>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub decode_counts: BTreeMap<String, u64>,
     pub issues: u64,
     pub issues_outside_selection: u64,
     pub issues_preserved: u64,
@@ -271,7 +278,11 @@ pub fn validate(args: &InputArgs, op: &Operation) -> Result<()> {
         }
     }
     if let Operation::Replay {
-        speed, repeat, gap, ..
+        speed,
+        repeat,
+        gap,
+        dbc,
+        ..
     } = op
     {
         ensure!(
@@ -282,6 +293,18 @@ pub fn validate(args: &InputArgs, op: &Operation) -> Result<()> {
             args.input != "-" || *repeat == 1,
             "stdin cannot be reopened for repeat"
         );
+        if !dbc.is_empty() {
+            ensure!(
+                !args.preserve_records,
+                "DBC replay cannot preserve opaque native records"
+            );
+            if let Some(w) = op.write_args() {
+                ensure!(
+                    formats::output_format(&w.output, w.format)? == Format::Jsonl,
+                    "DBC replay file output requires JSONL (decoded_frame records)"
+                );
+            }
+        }
     }
     if let Some(w) = op.write_args() {
         formats::output_format(&w.output, w.format)?;
@@ -356,7 +379,11 @@ pub fn run(
     report.status = match &result {
         Ok(())
             if report.issues > report.issues_outside_selection + report.issues_preserved
-                || !report.losses.is_empty() =>
+                || !report.losses.is_empty()
+                || report
+                    .decode_counts
+                    .iter()
+                    .any(|(k, v)| *v > 0 && !matches!(k.as_str(), "decoded" | "remote")) =>
         {
             "partial"
         }
@@ -401,6 +428,35 @@ fn execute(
     let output_format = writing
         .map(|w| formats::output_format(&w.output, w.format))
         .transpose()?;
+    let mut decoder = match op {
+        Operation::Replay { dbc, .. } if !dbc.is_empty() => {
+            ensure!(
+                !args.preserve_records,
+                "DBC replay cannot preserve opaque native records"
+            );
+            ensure!(
+                output_format.is_none() || output_format == Some(Format::Jsonl),
+                "DBC replay file output requires JSONL (decoded_frame records)"
+            );
+            // Load once, before opening any output. The compiled codec is reused
+            // across replay cycles; the scheduler remains responsible for timing.
+            let decoder = crate::dbc::Decoder::load(dbc, cancel)?;
+            for db in &decoder.assignments {
+                if let Some(w) = writing {
+                    output::ensure_distinct_paths(&w.output, &db.path)
+                        .context("output cannot replace DBC input")?;
+                }
+                if let Some(path) = &args.report {
+                    output::ensure_distinct_paths(path, &db.path)
+                        .context("report cannot replace DBC input")?;
+                }
+            }
+            report.engine_revision = Some(crate::dbc::ENGINE_REVISION.into());
+            report.databases = decoder.assignments.clone();
+            Some(decoder)
+        }
+        _ => None,
+    };
     let id_map = args
         .id_map
         .as_ref()
@@ -436,6 +492,7 @@ fn execute(
         .transpose()?;
     let mut writer = atomic
         .as_ref()
+        .filter(|_| decoder.is_none())
         .map(|o| {
             formats::make_writer_with_preservation(
                 o.file()?,
@@ -444,6 +501,11 @@ fn execute(
                 args.preserve_records,
             )
         })
+        .transpose()?;
+    let mut decoded_writer = atomic
+        .as_ref()
+        .filter(|_| decoder.is_some())
+        .map(|o| o.file().map(BufWriter::new))
         .transpose()?;
     let (repeat, gap) = if let Operation::Replay { repeat, gap, .. } = op {
         (*repeat, *gap)
@@ -555,7 +617,7 @@ fn execute(
                             issue.message
                         );
                     }
-                    if writer.is_some() {
+                    if writing.is_some() {
                         loss(
                             report,
                             &allowed,
@@ -625,7 +687,31 @@ fn execute(
                             .wait(output_frame.timestamp_ns(), cancel, controls)
                             .with_context(|| format!("replay at {:?}", record.location))?;
                     }
-                    if let Some(writer) = &mut writer {
+                    if let Some(decoder) = &mut decoder {
+                        let decoded = decoder.decode(FrameRecord {
+                            frame: output_frame,
+                            location: record.location,
+                            native: None,
+                        })?;
+                        increment(&mut report.decode_counts, decoded.status.clone())?;
+                        if let Some(writer) = &mut decoded_writer {
+                            write_decoded_json(writer, &decoded)?;
+                            report.frames_written += 1;
+                        } else {
+                            if matches!(
+                                op,
+                                Operation::Replay {
+                                    sink: Sink::Console,
+                                    ..
+                                }
+                            ) {
+                                write_decoded_console(&mut stdout, &decoded)?;
+                            } else {
+                                write_decoded_json(&mut stdout, &decoded)?;
+                            }
+                            stdout.flush()?;
+                        }
+                    } else if let Some(writer) = &mut writer {
                         if args.preserve_records {
                             writer.write_native(
                                 record
@@ -702,7 +788,17 @@ fn execute(
         pending = reader.next_item()?;
     }
     report.scan_complete = !stopped_by_limit;
-    if let Some(ref mut finalized_writer) = writer {
+    if let Some(decoder) = &decoder {
+        decoder.verify_databases(cancel)?;
+        if let Some(old) = &source_revision {
+            let now = std::fs::metadata(&args.input)?;
+            ensure!(
+                now.len() == old.len() && now.modified()? == old.modified()?,
+                "source changed during replay"
+            );
+        }
+    }
+    if let Some(w) = writing {
         if report
             .metadata
             .notes
@@ -737,13 +833,66 @@ fn execute(
             loss(report, &allowed, "field:source-metadata")?;
         }
         cancel.check()?;
-        finalized_writer.finish()?;
+        if let Some(writer) = &mut writer {
+            writer.finish()?;
+        }
+        if let Some(writer) = &mut decoded_writer {
+            writer.flush()?;
+        }
         report.finalized = true;
         drop(writer);
-        let w = writing.unwrap();
+        drop(decoded_writer);
         atomic.unwrap().publish(w.sync)?;
         report.published = true;
         report.durable = w.sync;
+    }
+    Ok(())
+}
+
+fn write_decoded_json(out: &mut impl Write, decoded: &crate::dbc::DecodedFrame) -> Result<()> {
+    serde_json::to_writer(&mut *out, decoded)?;
+    writeln!(out)?;
+    Ok(())
+}
+
+fn write_decoded_console(out: &mut impl Write, decoded: &crate::dbc::DecodedFrame) -> Result<()> {
+    let f = &decoded.record.frame;
+    writeln!(
+        out,
+        "{} ch{} {:X}{} {:?} {} [{}] {}",
+        time_text(f.timestamp_ns()),
+        f.channel(),
+        f.id(),
+        if f.extended() { "x" } else { "" },
+        f.direction(),
+        decoded.message.as_deref().unwrap_or("?"),
+        decoded.status,
+        f.data()
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )?;
+    for signal in &decoded.signals {
+        writeln!(
+            out,
+            "  {} = {} {} (raw={}, status={}){}",
+            signal.name,
+            signal
+                .physical
+                .map_or_else(|| "-".into(), |v| v.to_string()),
+            signal.unit,
+            signal.raw_text.as_deref().unwrap_or("-"),
+            signal.status,
+            if signal.description.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", signal.description)
+            }
+        )?;
+    }
+    if let Some(error) = &decoded.error {
+        writeln!(out, "  {error}")?;
     }
     Ok(())
 }

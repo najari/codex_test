@@ -112,7 +112,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "candb-engine"
 version = "0.1.0"
-source = "git+https://github.com/najari/candb-csharp-clone?rev=da64ad9ccf10237fce0993d1b83f460416d3da53#da64ad9ccf10237fce0993d1b83f460416d3da53"
+source = "git+https://github.com/najari/candb-csharp-clone?rev=c51f18848dc4e32afd96b1a6e5bc975da70c6828#c51f18848dc4e32afd96b1a6e5bc975da70c6828"
 dependencies = [
  "encoding_rs",
  "regex",

@@ -30,6 +30,7 @@ Windows에는 Rust MSVC toolchain 1.88 이상, Visual Studio C++ Build Tools, Wi
 | `export INPUT -o OUTPUT --format jsonl` | 버전 있는 frame stream 출력; CSV도 지원 |
 | `record --input INPUT -o OUTPUT` | 파일 또는 JSONL stdin을 새 로그로 기록 |
 | `replay INPUT` | 기본 1배속·1회, JSONL stdout으로 재생 |
+| `replay INPUT --dbc CHANNEL=PATH` | 재생 시간에 맞춰 DBC 신호 출력; JSONL 또는 `--sink console` |
 | `index build INPUT -o INDEX` / `index info INDEX` | 원본 payload를 복제하지 않는 SQLite 검색 인덱스 작성/조회 |
 | `index query INPUT --index INDEX` | 원본을 확인하고 선택 chunk부터 읽는 JSONL 검색 |
 | `decode INPUT --dbc CHANNEL=PATH` | 실제 Rust DBC 엔진을 통한 typed 신호 해석; `--index` 지원 |
@@ -53,6 +54,15 @@ ID는 decimal 또는 `0x` hexadecimal로 입력한다. `--id-kind standard|exten
 배속은 실행 대기 간격만 바꾼다. 새 파일의 timestamp는 원본 offset을 유지한다. 첫 선택 프레임은 즉시 재생하며, 반복은 선택 프레임의 시간 span과 `--repeat-gap`으로 회차 offset을 계산한다. 기본 gap은 0이고 반복 경계의 동일 timestamp를 허용한다.
 
 `--control-stdin` 모드에서 한 줄씩 `pause`, `resume`, `stop`을 입력한다. pause 시간은 재생 deadline에 반영된다. 일반 실행은 Ctrl+C로 취소한다. 시간 역행은 기본 오류이며, `--on-regression immediate`를 명시하면 원본 순서에서 역행 프레임을 즉시 내보낸다.
+
+DBC를 연결해 재생하려면 `--dbc CHANNEL=PATH`를 반복 지정한다. 콘솔은 메시지 이름, 신호의 물리값·단위·raw 값·enum 설명·상태를 표시한다.
+
+```powershell
+.\dist\canlog.exe replay .\can_example\web_downloads\2026-10-03\atemall_motorola\motorola_matrix.asc --dbc '1=.\can_example\web_downloads\2026-10-03\atemall_motorola\motorola_matrix.dbc' --sink console --speed 2
+.\dist\canlog.exe replay .\can_example\web_downloads\2026-10-03\py_canoe_demo\demo_log.blf --dbc '1=.\can_example\web_downloads\2026-10-03\py_canoe_demo\easy.dbc' --dbc '2=.\can_example\web_downloads\2026-10-03\py_canoe_demo\easy.dbc' --sink console --unsupported skip --on-regression immediate
+```
+
+`--no-wait`를 추가하면 시간 대기 없이 해석한다. JSONL stdout과 `-o signals.jsonl`은 `decode`와 같은 `decoded_frame` 구조다. 반복 재생은 `record.frame.timestamp_ns`에 회차 offset을 적용하고 `record.location`은 원본 위치를 유지한다. DBC 미지정 채널·미등록 ID·길이/형식 불일치도 프레임을 남기고 상태를 표시하며 종료 코드 3과 report의 `decode_counts`로 집계한다. DBC 지정 시 파일 출력은 JSONL만 지원하고 `--preserve-records`는 사용할 수 없다. 파일 출력의 미지원 기록·날짜/부가 필드 손실은 기존 `--allow-loss` 정책을 따른다. 사용 중 DBC가 변경되거나 취소되면 임시 출력은 게시하지 않는다. 자세한 재현 예제는 [DBC 재생 검증](docs/replay-dbc-validation.md)을 참고한다.
 
 ## Error/event 보존과 ASC 이름 매핑
 
