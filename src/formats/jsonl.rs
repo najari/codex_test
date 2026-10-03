@@ -99,7 +99,11 @@ impl LogReader for JsonReader {
             };
             self.ordinal += 1;
             return Ok(Some(match parsed {
-                Ok(frame) => ReadItem::Frame(FrameRecord { frame, location }),
+                Ok(frame) => ReadItem::Frame(FrameRecord {
+                    frame,
+                    location,
+                    native: None,
+                }),
                 Err(e) => ReadItem::Issue(Issue {
                     kind: IssueKind::CorruptedRegion,
                     message: e.to_string(),
@@ -107,6 +111,7 @@ impl LogReader for JsonReader {
                     timestamp_ns: None,
                     channel: None,
                     object_type: None,
+                    native: None,
                 }),
             }));
         }

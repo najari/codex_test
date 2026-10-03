@@ -182,6 +182,22 @@ pub struct Location {
 pub struct FrameRecord {
     pub frame: Frame,
     pub location: Location,
+    #[serde(skip)]
+    pub native: Option<NativeRecord>,
+}
+
+/// Bounded native record content for same-format rewriting. Not a cross-format codec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeRecord {
+    Asc {
+        timestamp_ns: i64,
+        radix: u32,
+        body: String,
+    },
+    Blf {
+        timestamp_ns: Option<i64>,
+        object: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +217,8 @@ pub struct Issue {
     pub timestamp_ns: Option<i64>,
     pub channel: Option<u16>,
     pub object_type: Option<u32>,
+    #[serde(skip)]
+    pub native: Option<NativeRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +238,10 @@ pub struct Metadata {
     pub blf_start: Option<[u16; 8]>,
     pub blf_stop: Option<[u16; 8]>,
     pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asc_radix: Option<u32>,
+    #[serde(default)]
+    pub mapped_frames: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -241,9 +263,23 @@ impl Default for Limits {
 pub trait LogReader {
     fn metadata(&self) -> &Metadata;
     fn next_item(&mut self) -> Result<Option<ReadItem>>;
+    fn configure(
+        &mut self,
+        preserve: bool,
+        id_map: Option<std::sync::Arc<crate::id_map::IdMap>>,
+    ) -> Result<()> {
+        ensure!(
+            !preserve && id_map.is_none(),
+            "native preservation and ID mapping require ASC/BLF input"
+        );
+        Ok(())
+    }
 }
 pub trait LogWriter {
     fn write_frame(&mut self, frame: &Frame) -> Result<()>;
+    fn write_native(&mut self, _record: &NativeRecord) -> Result<()> {
+        bail!("writer cannot preserve this native record")
+    }
     fn finish(&mut self) -> Result<()>;
 }
 
@@ -322,9 +358,31 @@ pub fn parse_id(text: &str, radix: u32) -> Result<(u32, bool)> {
 
 pub fn parse_date(text: &str) -> Option<[u16; 8]> {
     use chrono::{Datelike, NaiveDateTime, Timelike};
+    let mut tokens: Vec<_> = text.split_whitespace().collect();
+    if tokens.len() < 5 {
+        return None;
+    }
+    tokens[0] = match tokens[0] {
+        "Mon" | "Mo" => "Mon",
+        "Die" | "Di" => "Tue",
+        "Mit" | "Mi" => "Wed",
+        "Don" | "Do" => "Thu",
+        "Fre" | "Fr" => "Fri",
+        "Sam" | "Sa" => "Sat",
+        "Son" | "So" => "Sun",
+        other => other,
+    };
+    tokens[1] = match tokens[1] {
+        "Mär" | "Mrz" => "Mar",
+        "Mai" => "May",
+        "Okt" => "Oct",
+        "Dez" => "Dec",
+        other => other,
+    };
+    let normalized = tokens.join(" ");
     let date = ["%a %b %e %I:%M:%S%.f %p %Y", "%a %b %e %H:%M:%S%.f %Y"]
         .iter()
-        .find_map(|format| NaiveDateTime::parse_from_str(text, format).ok())?;
+        .find_map(|format| NaiveDateTime::parse_from_str(&normalized, format).ok())?;
     Some([
         date.year().try_into().ok()?,
         date.month() as u16,

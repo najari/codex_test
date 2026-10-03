@@ -16,6 +16,9 @@ pub struct AscReader {
     relative: bool,
     time: i64,
     triggers: u32,
+    preserve: bool,
+    id_map: Option<std::sync::Arc<crate::id_map::IdMap>>,
+    mapped_current: bool,
 }
 impl AscReader {
     pub fn new(input: Box<dyn BufRead>, source: &str, limits: Limits) -> Self {
@@ -35,6 +38,9 @@ impl AscReader {
             relative: false,
             time: 0,
             triggers: 0,
+            preserve: false,
+            id_map: None,
+            mapped_current: false,
         }
     }
     fn location(&self) -> Location {
@@ -59,14 +65,27 @@ impl AscReader {
             timestamp_ns,
             channel,
             object_type: None,
+            native: None,
         })
+    }
+    fn resolve_id(&mut self, token: &str, channel: u16) -> Result<(u32, bool)> {
+        if let Ok(id) = parse_id(token, self.radix) {
+            return Ok(id);
+        }
+        let id = self
+            .id_map
+            .as_ref()
+            .and_then(|m| m.resolve(channel, token))
+            .with_context(|| format!("numeric ID missing for {token} on channel {channel}"))?;
+        self.mapped_current = true;
+        Ok(id)
     }
     fn parse_frame(&mut self, t: &[&str], timestamp: i64) -> Result<Frame> {
         if t[1] == "CANFD" {
             ensure!(t.len() >= 9, "truncated CAN FD row");
             let channel = t[2].parse()?;
             let direction = direction(t[3])?;
-            let (id, extended) = parse_id(t[4], self.radix)?;
+            let (id, extended) = self.resolve_id(t[4], channel)?;
             let i = if matches!(t[5], "0" | "1") { 5 } else { 6 };
             ensure!(t.len() >= i + 4, "truncated CAN FD fields");
             let brs = flag(t[i])?;
@@ -108,7 +127,7 @@ impl AscReader {
             let (id, extended) = if let Some(raw) = trailer_id {
                 parse_id(raw, 10)?
             } else {
-                parse_id(t[2], self.radix)?
+                self.resolve_id(t[2], channel)?
             };
             let direction = direction(t[3])?;
             ensure!(
@@ -167,6 +186,19 @@ fn flag(t: &str) -> Result<bool> {
 }
 
 impl LogReader for AscReader {
+    fn configure(
+        &mut self,
+        preserve: bool,
+        id_map: Option<std::sync::Arc<crate::id_map::IdMap>>,
+    ) -> Result<()> {
+        ensure!(
+            !preserve || id_map.is_none(),
+            "preserve-records and ID mapping cannot be combined"
+        );
+        self.preserve = preserve;
+        self.id_map = id_map;
+        Ok(())
+    }
     fn metadata(&self) -> &Metadata {
         &self.metadata
     }
@@ -246,6 +278,7 @@ impl LogReader for AscReader {
                 );
                 self.relative = mode == "relative";
                 self.metadata.time_mode = Some(mode.into());
+                self.metadata.asc_radix = Some(self.radix);
                 continue;
             }
             if text.ends_with("internal events logged") {
@@ -294,33 +327,62 @@ impl LogReader for AscReader {
                 delta
             };
             let timestamp = self.time;
-            if text.contains("Start of measurement") {
+            if text.contains("Start of measurement") && !self.preserve {
                 continue;
             }
             let channel = t.get(1).and_then(|c| c.parse::<u16>().ok());
             let can = channel.is_some() || t.get(1) == Some(&"CANFD");
-            let item = if text.contains("ErrorFrame") && can {
-                self.issue(IssueKind::CanError, text, Some(timestamp), channel)
+            let symbolic = if t.get(1) == Some(&"CANFD") {
+                t.get(2)
+                    .and_then(|c| c.parse::<u16>().ok())
+                    .zip(t.get(4).copied())
+            } else if t.get(3).is_some_and(|d| matches!(*d, "Rx" | "Tx")) {
+                channel.zip(t.get(2).copied())
+            } else {
+                None
+            };
+            self.mapped_current = false;
+            let mut item = if text.contains("ErrorFrame") && can {
+                let error_channel = channel.or_else(|| t.get(2).and_then(|c| c.parse().ok()));
+                self.issue(
+                    IssueKind::CanError,
+                    text.clone(),
+                    Some(timestamp),
+                    error_channel,
+                )
             } else if !can
                 || (channel.is_some()
                     && (t.get(2).is_some_and(|v| v.starts_with("Statistic:"))
                         || t.get(3) == Some(&"=")))
             {
-                self.issue(IssueKind::UnsupportedRecord, text, Some(timestamp), channel)
-            } else if channel.is_some()
-                && t.get(3).is_some_and(|d| matches!(*d, "Rx" | "Tx"))
-                && parse_id(t[2], self.radix).is_err()
-                && !t.windows(3).any(|w| w[0] == "ID" && w[1] == "=")
+                self.issue(
+                    IssueKind::UnsupportedRecord,
+                    text.clone(),
+                    Some(timestamp),
+                    channel,
+                )
+            } else if symbolic.is_some_and(|(c, token)| {
+                parse_id(token, self.radix).is_err()
+                    && self
+                        .id_map
+                        .as_ref()
+                        .and_then(|m| m.resolve(c, token))
+                        .is_none()
+            }) && !t.windows(3).any(|w| w[0] == "ID" && w[1] == "=")
             {
                 self.issue(
                     IssueKind::UnresolvedId,
-                    format!("numeric ID missing for {}", t[2]),
+                    format!("numeric ID missing for {}", symbolic.unwrap().1),
                     Some(timestamp),
                     channel,
                 )
             } else {
                 match self.parse_frame(&t, timestamp) {
                     Ok(frame) => {
+                        if self.mapped_current {
+                            self.metadata.mapped_frames += 1;
+                            self.note_annotations();
+                        }
                         if text.contains("Length =")
                             && !self.metadata.notes.iter().any(|s| s == "frame annotations")
                         {
@@ -329,6 +391,7 @@ impl LogReader for AscReader {
                         ReadItem::Frame(FrameRecord {
                             frame,
                             location: self.location(),
+                            native: None,
                         })
                     }
                     Err(e) => self.issue(
@@ -339,6 +402,23 @@ impl LogReader for AscReader {
                     ),
                 }
             };
+            if self.preserve {
+                let native = NativeRecord::Asc {
+                    timestamp_ns: timestamp,
+                    radix: self.radix,
+                    body: text
+                        .split_once(char::is_whitespace)
+                        .map_or("", |(_, body)| body.trim_start())
+                        .to_owned(),
+                };
+                match &mut item {
+                    ReadItem::Frame(r) => r.native = Some(native),
+                    ReadItem::Issue(i) if i.kind != IssueKind::CorruptedRegion => {
+                        i.native = Some(native)
+                    }
+                    _ => {}
+                }
+            }
             self.ordinal += 1;
             return Ok(Some(item));
         }
@@ -349,9 +429,18 @@ impl LogReader for AscReader {
 pub struct AscWriter {
     output: BufWriter<File>,
     finished: bool,
+    radix: u32,
 }
 impl AscWriter {
     pub fn new(file: File, metadata: &Metadata) -> Result<Self> {
+        Self::with_preservation(file, metadata, false)
+    }
+    pub fn with_preservation(file: File, metadata: &Metadata, preserve: bool) -> Result<Self> {
+        let radix = if preserve {
+            metadata.asc_radix.unwrap_or(16)
+        } else {
+            16
+        };
         let mut output = BufWriter::new(file);
         writeln!(
             output,
@@ -361,17 +450,43 @@ impl AscWriter {
                 .as_deref()
                 .unwrap_or("Thu Jan 1 00:00:00.000 1970")
         )?;
-        writeln!(output, "base hex  timestamps absolute\nno internal events logged\n// canlog 0.1.0; offsets preserved; date has no inferred UTC timezone")?;
+        writeln!(output, "base {} timestamps absolute\n{}internal events logged\n// canlog; offsets preserved; date has no inferred UTC timezone", if radix == 10 { "dec" } else { "hex" }, if preserve { "" } else { "no " })?;
         if metadata.date_text.is_none() {
             writeln!(output, "// canlog-date-origin unknown")?;
         }
         Ok(Self {
             output,
             finished: false,
+            radix,
         })
     }
 }
 impl LogWriter for AscWriter {
+    fn write_native(&mut self, record: &NativeRecord) -> Result<()> {
+        ensure!(!self.finished, "writer already finalized");
+        let NativeRecord::Asc {
+            timestamp_ns,
+            radix,
+            body,
+        } = record
+        else {
+            bail!("ASC writer requires ASC native record");
+        };
+        ensure!(
+            *timestamp_ns >= 0 && matches!(*radix, 10 | 16),
+            "invalid ASC native record coordinates"
+        );
+        ensure!(
+            *radix == self.radix,
+            "ASC native base changed; mixed-base preservation is unsupported"
+        );
+        ensure!(
+            !body.is_empty() && body.len() <= 1048576 && !body.contains(['\n', '\r']),
+            "invalid ASC native record body"
+        );
+        writeln!(self.output, "{} {}", time_text(*timestamp_ns), body)?;
+        Ok(())
+    }
     fn write_frame(&mut self, f: &Frame) -> Result<()> {
         ensure!(!self.finished, "writer already finalized");
         f.validate()?;
@@ -384,33 +499,44 @@ impl LogWriter for AscWriter {
         } else {
             "Tx"
         };
-        let id = format!("{:X}{}", f.id(), if f.extended() { "x" } else { "" });
+        let number = |v: u32| {
+            if self.radix == 10 {
+                v.to_string()
+            } else {
+                format!("{v:X}")
+            }
+        };
+        let id = format!("{}{}", number(f.id()), if f.extended() { "x" } else { "" });
         write!(self.output, "{} ", time_text(f.timestamp_ns()))?;
         if f.fd() {
             write!(
                 self.output,
-                "CANFD {} {} {} {} {} {:X} {}",
+                "CANFD {} {} {} {} {} {} {}",
                 f.channel(),
                 dir,
                 id,
                 u8::from(f.brs()),
                 u8::from(f.esi()),
-                f.raw_dlc(),
+                number(f.raw_dlc() as u32),
                 f.data().len()
             )?;
         } else {
             write!(
                 self.output,
-                "{} {} {} {} {:X}",
+                "{} {} {} {} {}",
                 f.channel(),
                 id,
                 dir,
                 if f.remote() { "r" } else { "d" },
-                f.raw_dlc()
+                number(f.raw_dlc() as u32)
             )?;
         }
         for b in f.data() {
-            write!(self.output, " {b:02X}")?;
+            if self.radix == 10 {
+                write!(self.output, " {b}")?;
+            } else {
+                write!(self.output, " {b:02X}")?;
+            }
         }
         if f.fd() {
             write!(

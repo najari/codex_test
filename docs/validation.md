@@ -7,11 +7,11 @@
 - OS: `Windows-11-10.0.26200-SP0`
 - CPU: 12th Gen Intel(R) Core(TM) i5-1240P; RAM 약 16 GiB.
 - Compiler: `rustc 1.98.1 (48a229cea 2026-09-01)`; Rust MSVC release build.
-- `cargo test --locked`: 37개 통과 (단위 7, 통합 30).
+- `cargo test --locked`: 50개 통과 (단위 8, 기존 통합 30, 보존/매핑 통합 12).
 - `cargo clippy --locked --all-targets -- -D warnings`, `cargo fmt --all -- --check`: 통과.
 - 최소 Rust 1.88.0: `cargo +1.88.0 check --locked --all-targets` 통과.
 - GitHub CI workflow는 Windows/Linux 및 MSRV gate를 추가했다. 원격 CI 실행 성공은 이 로컬 결과에 포함하지 않는다.
-- `dist/canlog.exe` SHA-256: `139dbff02ce94a1dafec0c165995686fed71b0569478c2d60873588a2cc245c7`
+- `dist/canlog.exe` SHA-256: `1fc7382276011ff2f24eafae19c2529423639ad45d83416ffd9c05ccabf24ef5`
 
 ## 샘플·독립 비교
 
@@ -25,9 +25,12 @@
 - 별도 합성 profile은 FD DLC 0–15/길이 0–64, BRS/ESI, Classic raw DLC 0–15, Remote, 최대 ID/channel, 독립 v2/FD64를 검증했다.
 - python-can ASC의 DLC=0 FD를 remote로 표시하는 차이를 report에 명시했다. 원본 BLF epoch float64 시간 오차 허용은 500ns이고, Rust 내부 왕복 시간은 정수 ns의 정확한 일치다.
 - 외부 FD 비교로 CAN_FD_MESSAGE의 flags/valid-bytes offset 오류를 발견해 수정했으며 독립 byte-layout 회귀 테스트를 추가했다.
+- 같은 포맷의 native 기록 보존: 43개 전체에서 source → record → replay content digest가 일치했다. 총 248,892개 기록이며 CAN error/event/unresolved/unknown object를 포함한다.
+- Native 검증은 별도 Python scanner로 ASC의 base·정수 ns·timestamp 뒤 행을, BLF의 순서 있는 inner object bytes를 비교한다. 압축·header·주석·공백의 byte-for-byte 파일 일치를 주장하지 않는다.
+- 이름 매핑은 채널별 Standard/Extended와 Classic/FD, numeric/trailer 우선, 누락·중복·범위·상한·입력 보호를 검증했다. 단위 fixture의 임의 ID를 실제 샘플의 정답이라고 가정하지 않는다.
 - [Checksum/결과 manifest](sample-manifest.json), [지원·손실 범위](support.md). 원본 샘플은 수정·복사·Git 추가하지 않았다.
 
-| 샘플 | CAN frames | Issues | 상태 |
+| 샘플 | CAN frames | 기본 scan issues | 기본 scan 상태 |
 |---|---:|---:|---|
 | `can_example/asf/Action.asc` | 0 | 28 | partial |
 | `can_example/asf/can1.asc` | 0 | 0 | complete |
@@ -79,10 +82,10 @@
 
 | 모드 | 실제 경과 시간 |
 |---|---:|
-| 1배속 | 0.452s |
-| 2배속 | 0.260s |
-| no-wait | 0.039s |
-| pause-resume | 0.550s |
+| 1배속 | 0.453s |
+| 2배속 | 0.248s |
+| no-wait | 0.038s |
+| pause-resume | 0.554s |
 
 pause/resume의 0.15s 정지를 반영했다. 3600s frame 간격에서도 stop 제어로 1s 이내 취소와 임시 출력 폐기를 통합 테스트했다.
 
@@ -90,10 +93,10 @@ pause/resume의 0.15s 정지를 반영했다. 3600s frame 간격에서도 stop �
 
 | Format | Frames | 입력 bytes | 시간 | Frames/s | Peak working set | 첫 frame 지연 |
 |---|---:|---:|---:|---:|---:|---:|
-| ASC | 100,000 | 4,390,029 | 0.347s | 287,967 | 5.29 MiB | 36.3ms |
-| BLF | 100,000 | 386,696 | 0.239s | 418,207 | 5.75 MiB | 36.5ms |
-| ASC | 1,000,000 | 44,890,029 | 2.814s | 355,418 | 5.30 MiB | 28.0ms |
-| BLF | 1,000,000 | 3,865,290 | 1.575s | 634,896 | 5.76 MiB | 40.6ms |
+| ASC | 100,000 | 4,390,029 | 0.381s | 262,409 | 5.43 MiB | 43.1ms |
+| BLF | 100,000 | 386,696 | 0.251s | 398,112 | 6.06 MiB | 40.7ms |
+| ASC | 1,000,000 | 44,890,029 | 2.961s | 337,749 | 5.42 MiB | 40.2ms |
+| BLF | 1,000,000 | 3,865,290 | 1.808s | 553,171 | 5.79 MiB | 33.1ms |
 
 10배 frame 수에서도 ASC/BLF 각각 64 MiB 미만과 16 MiB 이내의 peak 증가 조건을 통과했다. 이 수치는 위 fixture의 scan 결과이고, 설정된 최대 container/object를 가진 모든 입력의 동일 RSS를 보장하지 않는다.
 
@@ -109,6 +112,6 @@ ID 종류 5000개를 가진 입력도 기록·재생했다. 상세 통계의 key
 .\target\verify-env\Scripts\python.exe .\scripts\verify_samples.py --exe .\dist\canlog.exe
 ```
 
-최종 상세 실행 결과: `artifacts/verification-1790993265991884700/verification.json`. 원본 checksum, actual loss, 독립 비교의 차이와 benchmark 입력 checksum을 포함한다.
+최종 상세 실행 결과: `artifacts/verification-1790996103834299000/verification.json`. 원본 checksum, actual loss, 독립 비교의 차이와 benchmark 입력 checksum을 포함한다.
 
-장비 송수신, MF4, SQLite/DBC/CDD/진단, arbitrary ASC/BLF dialect 및 raw error/event 재작성은 이번 검증 범위 밖이다.
+장비 송수신, MF4, SQLite/DBC/CDD/진단, arbitrary ASC/BLF dialect와 error/event의 교차 포맷 의미 변환은 이번 검증 범위 밖이다.

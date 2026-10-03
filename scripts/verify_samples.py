@@ -10,6 +10,8 @@ import platform
 import struct
 import subprocess
 import time
+import zlib
+from decimal import Decimal
 from pathlib import Path
 
 import can
@@ -33,6 +35,69 @@ def engine_frames(exe, source):
 def key(frame):
     return (frame["channel"], frame["id"], frame["extended"], frame["direction"], frame["remote"],
             frame["fd"], frame["raw_dlc"], tuple(frame["data"]), frame["brs"], frame["esi"], frame["timestamp_ns"])
+
+
+def native_fingerprint(source):
+    """Independent content oracle: ASC body/base/ns or exact inner BLF objects, in order."""
+    digest = hashlib.sha256()
+    count = 0
+    def add(data):
+        nonlocal count
+        digest.update(struct.pack("<Q", len(data))); digest.update(data)
+        count += 1
+    if source.suffix.lower() == ".asc":
+        raw = source.read_bytes()
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = raw.decode("cp1252")
+        radix, relative, timestamp, triggers = 16, False, 0, 0
+        for row in text.splitlines():
+            row = row.strip()
+            if not row or row.startswith(("//", "date ")) or row.endswith("internal events logged"):
+                continue
+            if row.startswith("base "):
+                parts = row.split(); radix = 10 if parts[1] == "dec" else 16
+                relative = parts[3] == "relative"
+                continue
+            if row.startswith("Begin Triggerblock"):
+                triggers += 1; assert triggers == 1
+                timestamp = 0
+                continue
+            if row in ("End TriggerBlock", "End Triggerblock"):
+                continue
+            seconds, body = row.split(maxsplit=1)
+            ns = Decimal(seconds) * 1_000_000_000
+            assert ns >= 0 and ns == int(ns)
+            timestamp = timestamp + int(ns) if relative else int(ns)
+            add(json.dumps([radix, timestamp, body], ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    else:
+        file = source.read_bytes(); assert file[:4] == b"LOGG"
+        assert struct.unpack_from("<Q", file, 16)[0] == len(file)
+        pos = struct.unpack_from("<I", file, 4)[0]; stream = bytearray()
+        while pos < len(file):
+            assert file[pos:pos+4] == b"LOBJ"
+            hs, _, size, typ = struct.unpack_from("<HHII", file, pos+4)
+            assert typ == 10
+            body = file[pos+hs:pos+size]
+            method = struct.unpack_from("<H", body)[0]
+            data = body[16:] if method == 0 else zlib.decompress(body[16:])
+            assert len(data) == struct.unpack_from("<I", body, 8)[0]
+            stream.extend(data); pos += size + size % 4
+        assert pos == len(file)
+        pos = 0
+        while pos < len(stream):
+            padding = 0
+            while pos < len(stream) and stream[pos] == 0:
+                pos += 1; padding += 1
+            assert padding <= 3
+            if pos == len(stream):
+                break
+            assert stream[pos:pos+4] == b"LOBJ"
+            size = struct.unpack_from("<I", stream, pos+8)[0]
+            assert size >= 16 and pos+size <= len(stream)
+            add(stream[pos:pos+size]); pos += size
+    return {"records": count, "content_sha256": digest.hexdigest()}
 
 
 def reference_compare(source, frames, file_format):
@@ -98,6 +163,18 @@ def audit(exe, directory):
             row["roundtrip"] = "pass (CAN frames; declared losses separate)"
             row["external_generated_blf"] = reference_compare(blf, original, "blf")
             row["external_generated_asc"] = reference_compare(asc, original, "asc")
+            native = directory / f"{stem}.native{source.suffix.lower()}"
+            native_replayed = directory / f"{stem}.native-replayed{source.suffix.lower()}"
+            native_report = directory / f"{stem}.native-report.json"
+            run(exe, "record", "--input", source, "-o", native, "--preserve-records", "--report", native_report, accepted=(0,))
+            fingerprint = native_fingerprint(source)
+            assert fingerprint == native_fingerprint(native), "native record content mismatch"
+            run(exe, "replay", native, "-o", native_replayed, "--no-wait", "--on-regression", "immediate", "--preserve-records", accepted=(0,))
+            assert fingerprint == native_fingerprint(native_replayed), "native replay content mismatch"
+            preserved = json.loads(native_report.read_text(encoding="utf-8"))
+            assert preserved["native_records_written"] == fingerprint["records"]
+            assert not preserved["losses"] and preserved["status"] == "complete"
+            row["native_preservation"] = {**fingerprint, "status": "pass", "issues_preserved": preserved["issues_preserved"], "categories": preserved["preserved_counts"]}
             if source.suffix.lower() == ".blf":
                 row["external_original"] = reference_compare(source, original, "blf")
             else:

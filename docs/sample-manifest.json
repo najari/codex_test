@@ -15,8 +15,16 @@
       },
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
-        "field:source-metadata": 1,
         "unsupported-record": 28
+      },
+      "native_preservation": {
+        "records": 28,
+        "content_sha256": "cd6c20ad74dda3c7c1b140fb1e767dee82447a729b58a7b78cb56a21ae8e879b",
+        "status": "pass",
+        "issues_preserved": 28,
+        "categories": {
+          "UnsupportedRecord": 28
+        }
       }
     },
     {
@@ -29,7 +37,14 @@
       "issues": 0,
       "issue_counts": {},
       "roundtrip": "pass (CAN frames; declared losses separate)",
-      "actual_record_losses": {}
+      "actual_record_losses": {},
+      "native_preservation": {
+        "records": 0,
+        "content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "status": "pass",
+        "issues_preserved": 0,
+        "categories": {}
+      }
     },
     {
       "path": "can_example/asf/can2.asc",
@@ -46,6 +61,16 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 1776
+      },
+      "native_preservation": {
+        "records": 1776,
+        "content_sha256": "0af39eb82cf5643fff67a326a94fbafc9c2d10fcfdac8a6871109a724e13835e",
+        "status": "pass",
+        "issues_preserved": 1776,
+        "categories": {
+          "UnresolvedId": 443,
+          "UnsupportedRecord": 1333
+        }
       }
     },
     {
@@ -63,6 +88,15 @@
       "actual_record_losses": {
         "field:format-metadata": 1,
         "unsupported-record": 636
+      },
+      "native_preservation": {
+        "records": 783,
+        "content_sha256": "d86c145f98627db2bd35d99600542476383370d5750c7f096ca99194b3ba16ec",
+        "status": "pass",
+        "issues_preserved": 637,
+        "categories": {
+          "UnsupportedRecord": 637
+        }
       }
     },
     {
@@ -75,8 +109,13 @@
       "issues": 0,
       "issue_counts": {},
       "roundtrip": "pass (CAN frames; declared losses separate)",
-      "actual_record_losses": {
-        "field:source-metadata": 1
+      "actual_record_losses": {},
+      "native_preservation": {
+        "records": 20,
+        "content_sha256": "f8a0b3c1bb4407d86b4b121c3aa2ee5bb58526a2857fe76be1cf8111ab68e4ed",
+        "status": "pass",
+        "issues_preserved": 0,
+        "categories": {}
       }
     },
     {
@@ -93,6 +132,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 3
+      },
+      "native_preservation": {
+        "records": 3,
+        "content_sha256": "d5feb73dcb21f204439ec6327f8c7938ec34f19ac709ea0788494a6ff60037ab",
+        "status": "pass",
+        "issues_preserved": 3,
+        "categories": {
+          "UnsupportedRecord": 3
+        }
       }
     },
     {
@@ -109,6 +157,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 129
+      },
+      "native_preservation": {
+        "records": 129,
+        "content_sha256": "2496bb32d2b50cdde7bd0475b2ca151fcb6df5c7a832d63936699219cae01aa2",
+        "status": "pass",
+        "issues_preserved": 129,
+        "categories": {
+          "UnsupportedRecord": 129
+        }
       }
     },
     {
@@ -124,8 +181,16 @@
       },
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
-        "field:source-metadata": 1,
         "unsupported-record": 302
+      },
+      "native_preservation": {
+        "records": 302,
+        "content_sha256": "8df88c02cb358d3eeeab353940a730e6eb3afac3352d82a9dd2d36ab3f22e644",
+        "status": "pass",
+        "issues_preserved": 302,
+        "categories": {
+          "UnsupportedRecord": 302
+        }
       }
     },
     {
@@ -138,8 +203,13 @@
       "issues": 0,
       "issue_counts": {},
       "roundtrip": "pass (CAN frames; declared losses separate)",
-      "actual_record_losses": {
-        "field:source-metadata": 1
+      "actual_record_losses": {},
+      "native_preservation": {
+        "records": 18,
+        "content_sha256": "0bcd3e43e1edee2c69d34fe89838773a0dae93224dd84e5d0c13dd2ee685c8cb",
+        "status": "pass",
+        "issues_preserved": 0,
+        "categories": {}
       }
     },
     {
@@ -156,6 +226,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 5
+      },
+      "native_preservation": {
+        "records": 5,
+        "content_sha256": "ca71701f145032479ace2cb6aa8a360eef615a2f3e93021ed05f96f44f04ef01",
+        "status": "pass",
+        "issues_preserved": 5,
+        "categories": {
+          "UnsupportedRecord": 5
+        }
       }
     },
     {
@@ -172,6 +251,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 446
+      },
+      "native_preservation": {
+        "records": 446,
+        "content_sha256": "1cf46d18d309ad0a0e81a4ac5c4c04142a58b83126e9affeecf37d8432312ad6",
+        "status": "pass",
+        "issues_preserved": 446,
+        "categories": {
+          "UnsupportedRecord": 446
+        }
       }
     },
     {
@@ -184,8 +272,13 @@
       "issues": 0,
       "issue_counts": {},
       "roundtrip": "pass (CAN frames; declared losses separate)",
-      "actual_record_losses": {
-        "field:source-metadata": 1
+      "actual_record_losses": {},
+      "native_preservation": {
+        "records": 36,
+        "content_sha256": "974c31b30db6631b61d8e6af50e6934a4b6c87ee1a0868a3d85b9c043c6e835e",
+        "status": "pass",
+        "issues_preserved": 0,
+        "categories": {}
       }
     },
     {
@@ -203,6 +296,15 @@
       "actual_record_losses": {
         "field:format-metadata": 1,
         "unsupported-record": 2414
+      },
+      "native_preservation": {
+        "records": 3197,
+        "content_sha256": "d73921f0bb8b8b8cc00c9fc0bedbe61a459f4d12410b0ce12e0c8056a7f42678",
+        "status": "pass",
+        "issues_preserved": 2414,
+        "categories": {
+          "UnsupportedRecord": 2414
+        }
       }
     },
     {
@@ -220,6 +322,15 @@
       "actual_record_losses": {
         "field:format-metadata": 1,
         "unsupported-record": 2399
+      },
+      "native_preservation": {
+        "records": 3042,
+        "content_sha256": "c61b0c4ffad42699d96c6cf1dcff2e907365e790bd2ad2a18c597ca4027638f3",
+        "status": "pass",
+        "issues_preserved": 2399,
+        "categories": {
+          "UnsupportedRecord": 2399
+        }
       }
     },
     {
@@ -236,6 +347,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 11
+      },
+      "native_preservation": {
+        "records": 11,
+        "content_sha256": "602f2ff730597cc270faf8ae603a924dc70146732979a8fe1219830ee53d788a",
+        "status": "pass",
+        "issues_preserved": 11,
+        "categories": {
+          "UnsupportedRecord": 11
+        }
       }
     },
     {
@@ -252,6 +372,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 496
+      },
+      "native_preservation": {
+        "records": 496,
+        "content_sha256": "6539a5d5745ba9046ceba016abd6c04ef82208c5a4dafbe6ae3f89ffa9588334",
+        "status": "pass",
+        "issues_preserved": 496,
+        "categories": {
+          "UnsupportedRecord": 496
+        }
       }
     },
     {
@@ -268,6 +397,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 7
+      },
+      "native_preservation": {
+        "records": 7,
+        "content_sha256": "0e9501c9842022ffe67d09bcf0367cc57115b46e74c2b61d2d9bb701336987d6",
+        "status": "pass",
+        "issues_preserved": 7,
+        "categories": {
+          "UnsupportedRecord": 7
+        }
       }
     },
     {
@@ -284,6 +422,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 26
+      },
+      "native_preservation": {
+        "records": 26,
+        "content_sha256": "9fd47e18b5bee61f9ec235c5ba0b6a0839394899a51aba3c7cc1760662e404c1",
+        "status": "pass",
+        "issues_preserved": 26,
+        "categories": {
+          "UnsupportedRecord": 26
+        }
       }
     },
     {
@@ -300,6 +447,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 2016
+      },
+      "native_preservation": {
+        "records": 2017,
+        "content_sha256": "daaad6ee91134511784a86e4ec6fba66f4bf77ff0aa826e752df7b719b6cb442",
+        "status": "pass",
+        "issues_preserved": 2017,
+        "categories": {
+          "UnsupportedRecord": 2017
+        }
       }
     },
     {
@@ -316,6 +472,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 8
+      },
+      "native_preservation": {
+        "records": 8,
+        "content_sha256": "8cd73c5156e4ffae4b677dd0ecb685095bccab78a175fd07b6fd95f6bf56798b",
+        "status": "pass",
+        "issues_preserved": 8,
+        "categories": {
+          "UnsupportedRecord": 8
+        }
       }
     },
     {
@@ -332,6 +497,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 38
+      },
+      "native_preservation": {
+        "records": 38,
+        "content_sha256": "ceff5b8206db479d88b534d45c27781853ac79cf1a7fefc81b68b76f426deec3",
+        "status": "pass",
+        "issues_preserved": 38,
+        "categories": {
+          "UnsupportedRecord": 38
+        }
       }
     },
     {
@@ -348,6 +522,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 13072
+      },
+      "native_preservation": {
+        "records": 13072,
+        "content_sha256": "434fc18835aca5da2cf4694cc5208feb1b0c05c4fe7d1ccf3f833b099bbd874a",
+        "status": "pass",
+        "issues_preserved": 13072,
+        "categories": {
+          "UnsupportedRecord": 13072
+        }
       }
     },
     {
@@ -364,6 +547,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 72
+      },
+      "native_preservation": {
+        "records": 804,
+        "content_sha256": "84d2b7bac0118a7b2acdb11219e930c80f9c93c979f9733558848a6bb30f954b",
+        "status": "pass",
+        "issues_preserved": 72,
+        "categories": {
+          "UnsupportedRecord": 72
+        }
       }
     },
     {
@@ -380,6 +572,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 281
+      },
+      "native_preservation": {
+        "records": 2648,
+        "content_sha256": "4bc1513a826b9be7da76167cc2d63e7e0a7827fe7d8de96f7c0ec94462f1e819",
+        "status": "pass",
+        "issues_preserved": 281,
+        "categories": {
+          "UnsupportedRecord": 281
+        }
       }
     },
     {
@@ -397,6 +598,15 @@
       "actual_record_losses": {
         "field:format-metadata": 1,
         "unsupported-record": 482
+      },
+      "native_preservation": {
+        "records": 3117,
+        "content_sha256": "254ec29fe4523ab8fb00b18b5673f6429d92e4b26aad22a4a9ca90dca8110653",
+        "status": "pass",
+        "issues_preserved": 482,
+        "categories": {
+          "UnsupportedRecord": 482
+        }
       }
     },
     {
@@ -414,6 +624,15 @@
       "actual_record_losses": {
         "field:format-metadata": 1,
         "unsupported-record": 482
+      },
+      "native_preservation": {
+        "records": 2546,
+        "content_sha256": "865225a5ec0f3bafeacd8078c2d99ad497faca6b2ec21ce3d468882324e85834",
+        "status": "pass",
+        "issues_preserved": 482,
+        "categories": {
+          "UnsupportedRecord": 482
+        }
       }
     },
     {
@@ -430,6 +649,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 1267
+      },
+      "native_preservation": {
+        "records": 1267,
+        "content_sha256": "569c4937de6a28d35e4c06847d63dc39486aff07ded45f1ac55430a14dbe9ebc",
+        "status": "pass",
+        "issues_preserved": 1267,
+        "categories": {
+          "UnsupportedRecord": 1267
+        }
       }
     },
     {
@@ -446,6 +674,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 30
+      },
+      "native_preservation": {
+        "records": 832,
+        "content_sha256": "23c97d097d9e193071fea99e4491b3ade33242a3ca9e96c6a242f42ce397acdc",
+        "status": "pass",
+        "issues_preserved": 30,
+        "categories": {
+          "UnsupportedRecord": 30
+        }
       }
     },
     {
@@ -462,6 +699,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 6102
+      },
+      "native_preservation": {
+        "records": 6469,
+        "content_sha256": "24f44249c24ac60df8b01d1ea949a183d5b4e6fb23c5b110d4c83a77f6f5071b",
+        "status": "pass",
+        "issues_preserved": 6102,
+        "categories": {
+          "UnsupportedRecord": 6102
+        }
       }
     },
     {
@@ -478,6 +724,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 3925
+      },
+      "native_preservation": {
+        "records": 3925,
+        "content_sha256": "665aa9cdc9d397c0d0712746ddccd31fba08f239b7b3dd1edf5698779746671a",
+        "status": "pass",
+        "issues_preserved": 3925,
+        "categories": {
+          "UnsupportedRecord": 3925
+        }
       }
     },
     {
@@ -494,6 +749,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 38
+      },
+      "native_preservation": {
+        "records": 426,
+        "content_sha256": "edf6d3566fca3b2c6e34a37c5461536312864553c64a529524332f6a9dc09a9e",
+        "status": "pass",
+        "issues_preserved": 38,
+        "categories": {
+          "UnsupportedRecord": 38
+        }
       }
     },
     {
@@ -510,6 +774,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 77608
+      },
+      "native_preservation": {
+        "records": 77608,
+        "content_sha256": "57c7f509a77bc2b8b3ae8c09e0578864327caeaa9b4e22b316c8f1ffac2e4a10",
+        "status": "pass",
+        "issues_preserved": 77608,
+        "categories": {
+          "UnsupportedRecord": 77608
+        }
       }
     },
     {
@@ -526,6 +799,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 1160
+      },
+      "native_preservation": {
+        "records": 1160,
+        "content_sha256": "ca442f21d96e044a21c32c5dcf87507f2e199c22f07a99ea238c88bef705c512",
+        "status": "pass",
+        "issues_preserved": 1160,
+        "categories": {
+          "UnsupportedRecord": 1160
+        }
       }
     },
     {
@@ -542,6 +824,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 7330
+      },
+      "native_preservation": {
+        "records": 7330,
+        "content_sha256": "547651401442996f9ee23e6332270d71bea4c58f182336d1ab5c104f701fe6e0",
+        "status": "pass",
+        "issues_preserved": 7330,
+        "categories": {
+          "UnsupportedRecord": 7330
+        }
       }
     },
     {
@@ -558,6 +849,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 6558
+      },
+      "native_preservation": {
+        "records": 6558,
+        "content_sha256": "a1547d5dc2124e37649b963edaba85efa04b3847a78525f9785f2e79c3ed305d",
+        "status": "pass",
+        "issues_preserved": 6558,
+        "categories": {
+          "UnsupportedRecord": 6558
+        }
       }
     },
     {
@@ -575,6 +875,15 @@
       "actual_record_losses": {
         "field:format-metadata": 1,
         "unsupported-record": 1307
+      },
+      "native_preservation": {
+        "records": 41513,
+        "content_sha256": "2f42f0708d439f498eef0df00253901c55e55193bc205c45838c50d957a8771e",
+        "status": "pass",
+        "issues_preserved": 1307,
+        "categories": {
+          "UnsupportedRecord": 1307
+        }
       }
     },
     {
@@ -592,6 +901,16 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 2875
+      },
+      "native_preservation": {
+        "records": 3701,
+        "content_sha256": "37288303e92818a27469d416ac72fadbb6cb18c55932e41ffaf62624a65d34c2",
+        "status": "pass",
+        "issues_preserved": 2875,
+        "categories": {
+          "CanError": 1700,
+          "UnsupportedRecord": 1175
+        }
       }
     },
     {
@@ -609,6 +928,15 @@
       "actual_record_losses": {
         "field:format-metadata": 1,
         "unsupported-record": 25
+      },
+      "native_preservation": {
+        "records": 1606,
+        "content_sha256": "cd2bf3f33fd3828c0f55d3a57eec672fbb1aac8cc36814d8d333b43f991bb7b3",
+        "status": "pass",
+        "issues_preserved": 25,
+        "categories": {
+          "UnsupportedRecord": 25
+        }
       }
     },
     {
@@ -625,6 +953,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 236
+      },
+      "native_preservation": {
+        "records": 236,
+        "content_sha256": "00d85b73467ddccecacbeb2294230ba8f2354b60734540a259ecf400ed428e09",
+        "status": "pass",
+        "issues_preserved": 236,
+        "categories": {
+          "UnsupportedRecord": 236
+        }
       }
     },
     {
@@ -641,6 +978,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 6682
+      },
+      "native_preservation": {
+        "records": 25042,
+        "content_sha256": "8f48e1824be03688ccd86f64402271b9661b650a90d817dcfb3af22ef348c88b",
+        "status": "pass",
+        "issues_preserved": 6682,
+        "categories": {
+          "UnsupportedRecord": 6682
+        }
       }
     },
     {
@@ -657,6 +1003,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 668
+      },
+      "native_preservation": {
+        "records": 1668,
+        "content_sha256": "3e71b7e2c9f9596480044b5e46ec07a8a7eed0d867c3a6ebc99cafca36cc1450",
+        "status": "pass",
+        "issues_preserved": 668,
+        "categories": {
+          "UnsupportedRecord": 668
+        }
       }
     },
     {
@@ -674,6 +1029,15 @@
       "actual_record_losses": {
         "field:format-metadata": 1,
         "unsupported-record": 5408
+      },
+      "native_preservation": {
+        "records": 34483,
+        "content_sha256": "c8a090e6048066d28272ae90e18635bf5fa1226d087f29281cfde88cfb9bd7d2",
+        "status": "pass",
+        "issues_preserved": 5408,
+        "categories": {
+          "UnsupportedRecord": 5408
+        }
       }
     },
     {
@@ -690,6 +1054,15 @@
       "roundtrip": "pass (CAN frames; declared losses separate)",
       "actual_record_losses": {
         "unsupported-record": 493
+      },
+      "native_preservation": {
+        "records": 493,
+        "content_sha256": "149ce6bd74f827c68fbdb6c413e62cfbd8e971171df7fd4f606940fb31deac0c",
+        "status": "pass",
+        "issues_preserved": 493,
+        "categories": {
+          "UnsupportedRecord": 493
+        }
       }
     }
   ]

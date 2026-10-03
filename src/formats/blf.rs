@@ -35,6 +35,7 @@ pub struct BlfReader {
     container: u64,
     ordinal: u64,
     padding_seen: usize,
+    preserve: bool,
 }
 impl BlfReader {
     pub fn new(mut input: BufReader<File>, source: &str, limits: Limits) -> Result<Self> {
@@ -82,6 +83,7 @@ impl BlfReader {
             container: 0,
             ordinal: 0,
             padding_seen: 0,
+            preserve: false,
         })
     }
     fn container(&mut self) -> Result<bool> {
@@ -192,6 +194,14 @@ impl BlfReader {
                 timestamp_ns: timestamp,
                 channel,
                 object_type: Some(typ),
+                native: if self.preserve && kind != IssueKind::CorruptedRegion {
+                    Some(NativeRecord::Blf {
+                        timestamp_ns: timestamp,
+                        object: object.to_vec(),
+                    })
+                } else {
+                    None
+                },
             })
         };
         if !matches!(version, 1 | 2) {
@@ -323,7 +333,7 @@ impl BlfReader {
             2 | 73 | 104 => {
                 return Ok(issue(
                     IssueKind::CanError,
-                    format!("CAN error object {typ}; raw error details are not rewritten"),
+                    format!("CAN error object {typ}"),
                     if b.len() >= 2 {
                         Some(u16_at(b, 0))
                     } else {
@@ -340,12 +350,28 @@ impl BlfReader {
             }
         };
         match decoded {
-            Ok(frame) => Ok(ReadItem::Frame(FrameRecord { frame, location })),
+            Ok(frame) => Ok(ReadItem::Frame(FrameRecord {
+                frame,
+                location,
+                native: self.preserve.then(|| NativeRecord::Blf {
+                    timestamp_ns: timestamp,
+                    object: object.to_vec(),
+                }),
+            })),
             Err(e) => Ok(issue(IssueKind::CorruptedRegion, e.to_string(), None)),
         }
     }
 }
 impl LogReader for BlfReader {
+    fn configure(
+        &mut self,
+        preserve: bool,
+        id_map: Option<std::sync::Arc<crate::id_map::IdMap>>,
+    ) -> Result<()> {
+        ensure!(id_map.is_none(), "ID mapping requires ASC input");
+        self.preserve = preserve;
+        Ok(())
+    }
     fn metadata(&self) -> &Metadata {
         &self.metadata
     }
@@ -413,11 +439,15 @@ pub struct BlfWriter {
     count: u32,
     uncompressed: u64,
     start: [u16; 8],
+    source_stop: Option<[u16; 8]>,
     last_ns: i64,
     finished: bool,
 }
 impl BlfWriter {
     pub fn new(file: File, metadata: &Metadata) -> Result<Self> {
+        Self::with_preservation(file, metadata, false)
+    }
+    pub fn with_preservation(file: File, metadata: &Metadata, preserve: bool) -> Result<Self> {
         let mut output = BufWriter::new(file);
         output.write_all(&[0; 144])?;
         Ok(Self {
@@ -426,6 +456,7 @@ impl BlfWriter {
             count: 0,
             uncompressed: 144,
             start: metadata.blf_start.unwrap_or([0; 8]),
+            source_stop: if preserve { metadata.blf_stop } else { None },
             last_ns: 0,
             finished: false,
         })
@@ -456,8 +487,88 @@ impl BlfWriter {
         self.buffer.clear();
         Ok(())
     }
+    fn append_object(&mut self, object: &[u8], timestamp: Option<i64>) -> Result<()> {
+        for chunk in object.chunks(128 * 1024) {
+            if self.buffer.len() + chunk.len() > 128 * 1024 {
+                self.flush_container()?;
+            }
+            self.buffer.extend_from_slice(chunk);
+        }
+        let padding = object.len() % 4;
+        if self.buffer.len() + padding > 128 * 1024 {
+            self.flush_container()?;
+        }
+        self.buffer.extend_from_slice(&[0; 3][..padding]);
+        if let Some(t) = timestamp {
+            self.last_ns = self.last_ns.max(t);
+        }
+        self.count = self
+            .count
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("BLF object count exceeds u32"))?;
+        Ok(())
+    }
 }
 impl LogWriter for BlfWriter {
+    fn write_native(&mut self, record: &NativeRecord) -> Result<()> {
+        ensure!(!self.finished, "writer finalized");
+        let NativeRecord::Blf {
+            timestamp_ns,
+            object,
+        } = record
+        else {
+            bail!("BLF writer requires BLF native record");
+        };
+        ensure!(
+            object.len() >= 16 && object.len() <= 16777216 && &object[..4] == b"LOBJ",
+            "invalid native BLF object"
+        );
+        let hs = u16_at(object, 4) as usize;
+        ensure!(
+            hs >= 16
+                && hs <= object.len()
+                && u32_at(object, 8) as usize == object.len()
+                && u32_at(object, 12) != 10,
+            "invalid native BLF object boundary or nested container"
+        );
+        ensure!(
+            timestamp_ns.is_none_or(|t| t >= 0),
+            "negative native BLF timestamp"
+        );
+        let version = u16_at(object, 6);
+        let minimum = match version {
+            1 => 32,
+            2 => 40,
+            _ => 16,
+        };
+        ensure!(hs >= minimum, "invalid native BLF header version/size");
+        let decoded_time = if matches!(version, 1 | 2) {
+            let unit = match u32_at(object, 16) {
+                1 => 10_000_u64,
+                2 => 1,
+                _ => 0,
+            };
+            if unit == 0 {
+                None
+            } else {
+                Some(
+                    i64::try_from(
+                        u64_at(object, 24)
+                            .checked_mul(unit)
+                            .context("native timestamp overflow")?,
+                    )
+                    .context("native timestamp outside i64")?,
+                )
+            }
+        } else {
+            None
+        };
+        ensure!(
+            decoded_time == *timestamp_ns,
+            "native timestamp metadata disagrees with BLF header"
+        );
+        self.append_object(object, *timestamp_ns)
+    }
     fn write_frame(&mut self, f: &Frame) -> Result<()> {
         ensure!(!self.finished, "writer finalized");
         f.validate()?;
@@ -487,16 +598,7 @@ impl LogWriter for BlfWriter {
             8
         };
         b[data_offset..data_offset + f.data().len()].copy_from_slice(f.data());
-        if self.buffer.len() + object.len() > 128 * 1024 {
-            self.flush_container()?;
-        }
-        self.buffer.extend_from_slice(&object);
-        self.last_ns = self.last_ns.max(f.timestamp_ns());
-        self.count = self
-            .count
-            .checked_add(1)
-            .ok_or_else(|| anyhow!("BLF object count exceeds u32"))?;
-        Ok(())
+        self.append_object(&object, Some(f.timestamp_ns()))
     }
     fn finish(&mut self) -> Result<()> {
         ensure!(!self.finished, "writer finalized");
@@ -514,10 +616,12 @@ impl LogWriter for BlfWriter {
         put64(&mut header, 16, size);
         put64(&mut header, 24, self.uncompressed);
         put32(&mut header, 32, self.count);
-        let stop = system_date(self.start)
-            .and_then(|dt| dt.checked_add_signed(chrono::TimeDelta::nanoseconds(self.last_ns)))
-            .and_then(|dt| parse_date(&dt.format("%a %b %e %H:%M:%S%.3f %Y").to_string()))
-            .unwrap_or([0; 8]);
+        let stop = self.source_stop.unwrap_or_else(|| {
+            system_date(self.start)
+                .and_then(|dt| dt.checked_add_signed(chrono::TimeDelta::nanoseconds(self.last_ns)))
+                .and_then(|dt| parse_date(&dt.format("%a %b %e %H:%M:%S%.3f %Y").to_string()))
+                .unwrap_or([0; 8])
+        });
         for (i, value) in stop.iter().enumerate() {
             put16(&mut header, 40 + 2 * i, self.start[i]);
             put16(&mut header, 56 + 2 * i, *value);

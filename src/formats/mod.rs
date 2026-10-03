@@ -152,9 +152,21 @@ impl LogReader for StdinReader {
 }
 
 pub fn make_writer(file: File, format: Format, metadata: &Metadata) -> Result<Box<dyn LogWriter>> {
+    make_writer_with_preservation(file, format, metadata, false)
+}
+pub fn make_writer_with_preservation(
+    file: File,
+    format: Format,
+    metadata: &Metadata,
+    preserve: bool,
+) -> Result<Box<dyn LogWriter>> {
     match format {
-        Format::Asc => Ok(Box::new(asc::AscWriter::new(file, metadata)?)),
-        Format::Blf => Ok(Box::new(blf::BlfWriter::new(file, metadata)?)),
+        Format::Asc => Ok(Box::new(asc::AscWriter::with_preservation(
+            file, metadata, preserve,
+        )?)),
+        Format::Blf => Ok(Box::new(blf::BlfWriter::with_preservation(
+            file, metadata, preserve,
+        )?)),
         Format::Jsonl => Ok(Box::new(jsonl::JsonWriter::new(file))),
         Format::Csv => Ok(Box::new(jsonl::CsvWriter::new(file)?)),
     }

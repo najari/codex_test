@@ -108,6 +108,37 @@ impl<C: Clock> Scheduler<C> {
         cancel: &Cancellation,
         controls: Option<&Receiver<Control>>,
     ) -> Result<()> {
+        self.wait_optional(Some(timestamp), cancel, controls)
+    }
+    /// Unknown-time native objects obey controls without inventing a clock anchor.
+    pub fn wait_optional(
+        &mut self,
+        timestamp: Option<i64>,
+        cancel: &Cancellation,
+        controls: Option<&Receiver<Control>>,
+    ) -> Result<()> {
+        let Some(timestamp) = timestamp else {
+            loop {
+                cancel.check()?;
+                if let Some(controls) = controls {
+                    while let Ok(control) = controls.try_recv() {
+                        self.control(control, cancel);
+                    }
+                }
+                cancel.check()?;
+                if self.paused.is_none() {
+                    return Ok(());
+                }
+                self.clock.sleep(Duration::from_millis(10));
+            }
+        };
+        if self.anchor.is_none() {
+            // Pauses before the first known timestamp are already included in its wall origin.
+            self.paused_total = Duration::ZERO;
+            if self.paused.is_some() {
+                self.paused = Some(self.clock.now());
+            }
+        }
         let regression = self.previous.is_some_and(|p| timestamp < p);
         ensure!(
             !regression || self.immediate_regression,
@@ -187,5 +218,28 @@ mod tests {
         cancel.cancel();
         assert!(s.wait(11, &cancel, None).unwrap_err().is::<Cancelled>());
         assert!(Scheduler::new(FakeClock::default(), f64::NAN, false, false).is_err());
+    }
+    #[test]
+    fn unknown_time_keeps_anchor_and_obeys_stop() {
+        let cancel = Cancellation::default();
+        let mut s = Scheduler::new(FakeClock::default(), 1.0, false, false).unwrap();
+        s.wait_optional(None, &cancel, None).unwrap();
+        assert!(s.anchor.is_none());
+        s.control(Control::Pause, &cancel);
+        s.clock.sleep(Duration::from_secs(3));
+        s.control(Control::Resume, &cancel);
+        s.wait_optional(None, &cancel, None).unwrap();
+        s.wait(100, &cancel, None).unwrap();
+        assert_eq!(s.clock.now, Duration::from_secs(3));
+        s.clock.sleep(Duration::from_millis(300));
+        s.wait_optional(None, &cancel, None).unwrap();
+        s.wait(1_000_000_100, &cancel, None).unwrap();
+        assert_eq!(s.clock.now, Duration::from_secs(4));
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Control::Stop).unwrap();
+        assert!(s
+            .wait_optional(None, &cancel, Some(&rx))
+            .unwrap_err()
+            .is::<Cancelled>());
     }
 }

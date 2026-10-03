@@ -9,14 +9,14 @@ Windows에는 Rust MSVC toolchain 1.88 이상, Visual Studio C++ Build Tools, Wi
 ```powershell
 .\scripts\build.ps1 -Test -Release
 .\dist\canlog.exe --help
-.\dist\canlog.exe record --input .\can_example\asf\ComfortDiagData.asc -o .\recorded.blf --sync --allow-loss field:source-metadata --report .\record-report.json
+.\dist\canlog.exe record --input .\can_example\asf\ComfortDiagData.asc -o .\recorded.blf --sync --report .\record-report.json
 .\dist\canlog.exe replay .\recorded.blf --speed 2
 .\dist\canlog.exe replay .\recorded.blf --no-wait -o .\replayed.asc --report .\replay-report.json
 ```
 
 빌드 스크립트는 현재 프로세스에서 Rust PATH와 Visual C++ 환경을 설정하고 release 실행 파일을 `dist/`에 복사한다. `Cargo.lock`을 사용하며 변경 사항을 자동 커밋하거나 push하지 않는다.
 
-위 샘플의 `Don Nov ...` date는 지원하는 영어 날짜 문법으로 해석되지 않아 BLF origin을 unknown으로 기록한다. 예제는 이 metadata 손실을 명시 허용하며 종료 코드 3과 report를 남긴다. CAN frame의 timestamp와 payload는 유지한다.
+위 샘플의 `Don Nov ...`를 포함한 문서화된 독일어 날짜 별칭도 해석한다. 지원하지 않는 날짜나 서브밀리초 origin의 BLF 변환은 `field:source-metadata` 손실 허용이 필요하다.
 
 ## 명령
 
@@ -45,6 +45,31 @@ ID는 decimal 또는 `0x` hexadecimal로 입력한다. `--id-kind standard|exten
 배속은 실행 대기 간격만 바꾼다. 새 파일의 timestamp는 원본 offset을 유지한다. 첫 선택 프레임은 즉시 재생하며, 반복은 선택 프레임의 시간 span과 `--repeat-gap`으로 회차 offset을 계산한다. 기본 gap은 0이고 반복 경계의 동일 timestamp를 허용한다.
 
 `--control-stdin` 모드에서 한 줄씩 `pause`, `resume`, `stop`을 입력한다. pause 시간은 재생 deadline에 반영된다. 일반 실행은 Ctrl+C로 취소한다. 시간 역행은 기본 오류이며, `--on-regression immediate`를 명시하면 원본 순서에서 역행 프레임을 즉시 내보낸다.
+
+## Error/event 보존과 ASC 이름 매핑
+
+`--preserve-records`는 같은 ASC/BLF 포맷으로 파일을 기록할 때 원시 기록을 보존한다. CAN error·event·미해석 object·숫자 ID 없는 행과 정상 CAN의 부가 필드를 원본 순서로 기록한다. 보존 가능한 기록은 `--unsupported skip`이나 `unsupported-record` 손실 허용 없이 처리하고, report의 `issues_preserved`와 `native_records_written`으로 따로 집계한다. 해석되지 않은 기록을 정상 CAN frame으로 바꾸지는 않는다.
+
+```powershell
+.\dist\canlog.exe record --input .\can_example\blf\Easy.blf -o .\easy-preserved.blf --preserve-records --report .\easy-preserved-report.json
+.\dist\canlog.exe replay .\easy-preserved.blf -o .\easy-replayed.blf --preserve-records --no-wait --on-regression immediate
+.\dist\canlog.exe convert .\can_example\asf\can2.asc .\can2-preserved.asc --preserve-records
+```
+
+ASC는 timestamp를 absolute ns 표현으로 바꾸고 나머지 행과 원본 hex/dec base를 유지한다. BLF는 inner object bytes를 보존하고 container와 file header를 새로 만든다. 주석·여백·압축 결과까지 byte-for-byte 복원하는 기능은 아니다. 교차 포맷, 반복 재생, ID/ID 종류/방향 필터, 이름 매핑과의 동시 사용은 거부한다. 시간·채널 필터는 사용할 수 있고 좌표를 모르는 event는 보수적으로 포함한다. `--limit`은 기존과 같이 CAN frame 수를 제한한다.
+
+숫자 ID 없는 ASC CAN 메시지를 실제 CAN frame으로 해석하려면 `--id-map`에 다음 JSON 파일을 지정한다. 이름과 채널이 정확히 일치해야 하며, 매핑되지 않은 이름은 unresolved로 남는다. 파일은 256 KiB, 항목은 4096개로 제한하고 중복·범위 오류·숫자 ID로 해석될 수 있는 이름을 거부한다.
+
+```json
+{"schema_version":1,"mappings":[{"channel":1,"name":"Stress2","id":291,"extended":false}]}
+```
+
+```powershell
+.\dist\canlog.exe view .\can_example\asf\can2.asc --id-map .\id-map.json --unlimited --unsupported skip
+.\dist\canlog.exe record --input .\can_example\asf\can2.asc -o .\can2-mapped.blf --id-map .\id-map.json --unsupported skip --allow-loss unsupported-record --allow-loss field:format-metadata --report .\mapped-report.json
+```
+
+위 JSON의 ID는 사용법을 설명하는 값이다. 실제 `Stress2` ID는 DBC 등에서 확인한 값으로 작성한다. 숫자 ID와 `ID = ...` trailer를 우선하며 매핑으로 덮어쓰지 않는다. report는 사용한 매핑 내용을 포함하고 `mapped_frames`에 적용 수를 남긴다. 파일로 정규화하면 원본 이름은 `field:format-metadata` 손실로 보고한다.
 
 ## 미지원 기록과 출력 보호
 

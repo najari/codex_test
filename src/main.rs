@@ -103,6 +103,10 @@ enum Command {
 struct RecordArgs {
     #[arg(long, value_enum)]
     input_format: Option<canlog::formats::Format>,
+    #[arg(long)]
+    id_map: Option<PathBuf>,
+    #[arg(long)]
+    preserve_records: bool,
     #[arg(long, value_enum, default_value = "error")]
     unsupported: Unsupported,
     #[arg(long)]
@@ -135,6 +139,8 @@ impl RecordArgs {
         InputArgs {
             input,
             input_format: self.input_format,
+            id_map: self.id_map,
+            preserve_records: self.preserve_records,
             unsupported: self.unsupported,
             recover: self.recover,
             channel: self.channel,
@@ -277,6 +283,12 @@ fn main() {
     );
     if !report.losses.is_empty() {
         eprintln!("losses: {:?}", report.losses);
+    }
+    if report.native_records_written > 0 {
+        eprintln!(
+            "preserved: native={}, non-frame={}, categories={:?}",
+            report.native_records_written, report.issues_preserved, report.preserved_counts
+        );
     }
     if report.issues > 0 {
         eprintln!(

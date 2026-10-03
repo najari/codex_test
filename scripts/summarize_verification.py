@@ -15,11 +15,13 @@ def main():
     parser.add_argument("--compiler", required=True)
     parser.add_argument("--msrv-verified", action="store_true")
     args = parser.parse_args()
+    args.report = args.report.resolve()
     data = json.loads(args.report.read_text(encoding="utf-8"))
     assert not any("validation_error" in row for row in data["samples"])
     samples = []
     for row in data["samples"]:
         samples.append({key: row[key] for key in ["path", "bytes", "sha256", "source_license", "status", "frames", "issues", "issue_counts", "roundtrip", "actual_record_losses"]})
+        samples[-1]["native_preservation"] = row["native_preservation"]
     (ROOT / "docs/sample-manifest.json").write_text(json.dumps({"schema_version": 1, "verified_date": "2026-10-03", "samples": samples}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     fixture = ROOT / "tests/fixtures/can-mixed.asc"
     (ROOT / "tests/fixtures/manifest.json").write_text(json.dumps({"schema_version": 1, "fixtures": [{"path": fixture.name,
@@ -30,7 +32,7 @@ def main():
     exe = Path(data["cli"])
     lines = ["# CANLOG 구현 검증 결과", "", "검증일: 2026-10-03. 파일 기반 recording/replay 0.1의 지원 프로파일을 검증했다.", "",
              "## 실행 환경과 빌드", "", f"- OS: `{data['platform']}`", f"- CPU: {args.cpu}; RAM 약 16 GiB.",
-             f"- Compiler: `{args.compiler}`; Rust MSVC release build.", "- `cargo test --locked`: 37개 통과 (단위 7, 통합 30).",
+             f"- Compiler: `{args.compiler}`; Rust MSVC release build.", "- `cargo test --locked`: 50개 통과 (단위 8, 기존 통합 30, 보존/매핑 통합 12).",
              "- `cargo clippy --locked --all-targets -- -D warnings`, `cargo fmt --all -- --check`: 통과.",
              f"- 최소 Rust 1.88.0: {'`cargo +1.88.0 check --locked --all-targets` 통과.' if args.msrv_verified else '별도 실행 미확인.'}",
              "- GitHub CI workflow는 Windows/Linux 및 MSRV gate를 추가했다. 원격 CI 실행 성공은 이 로컬 결과에 포함하지 않는다.",
@@ -45,8 +47,11 @@ def main():
              "- 별도 합성 profile은 FD DLC 0–15/길이 0–64, BRS/ESI, Classic raw DLC 0–15, Remote, 최대 ID/channel, 독립 v2/FD64를 검증했다.",
              "- python-can ASC의 DLC=0 FD를 remote로 표시하는 차이를 report에 명시했다. 원본 BLF epoch float64 시간 오차 허용은 500ns이고, Rust 내부 왕복 시간은 정수 ns의 정확한 일치다.",
              "- 외부 FD 비교로 CAN_FD_MESSAGE의 flags/valid-bytes offset 오류를 발견해 수정했으며 독립 byte-layout 회귀 테스트를 추가했다.",
+             f"- 같은 포맷의 native 기록 보존: {len(samples)}개 전체에서 source → record → replay content digest가 일치했다. 총 {sum(s['native_preservation']['records'] for s in samples):,}개 기록이며 CAN error/event/unresolved/unknown object를 포함한다.",
+             "- Native 검증은 별도 Python scanner로 ASC의 base·정수 ns·timestamp 뒤 행을, BLF의 순서 있는 inner object bytes를 비교한다. 압축·header·주석·공백의 byte-for-byte 파일 일치를 주장하지 않는다.",
+             "- 이름 매핑은 채널별 Standard/Extended와 Classic/FD, numeric/trailer 우선, 누락·중복·범위·상한·입력 보호를 검증했다. 단위 fixture의 임의 ID를 실제 샘플의 정답이라고 가정하지 않는다.",
              "- [Checksum/결과 manifest](sample-manifest.json), [지원·손실 범위](support.md). 원본 샘플은 수정·복사·Git 추가하지 않았다.", "",
-             "| 샘플 | CAN frames | Issues | 상태 |", "|---|---:|---:|---|"]
+             "| 샘플 | CAN frames | 기본 scan issues | 기본 scan 상태 |", "|---|---:|---:|---|"]
     lines += [f"| `{s['path']}` | {s['frames']:,} | {s['issues']:,} | {s['status']} |" for s in samples]
     lines += ["", "## 실제 재생과 자원 측정", "", "3-frame, 0.4s 구간으로 실제 CLI를 실행했다. 배속 전후 timestamp는 원본 값을 유지했다.", "",
               "| 모드 | 실제 경과 시간 |", "|---|---:|"]
@@ -66,7 +71,7 @@ def main():
               "## 재현과 증거", "", "```powershell", ".\\scripts\\build.ps1 -Test -Release",
               ".\\target\\verify-env\\Scripts\\python.exe .\\scripts\\verify_samples.py --exe .\\dist\\canlog.exe", "```", "",
               f"최종 상세 실행 결과: `{args.report.relative_to(ROOT).as_posix()}`. 원본 checksum, actual loss, 독립 비교의 차이와 benchmark 입력 checksum을 포함한다.", "",
-              "장비 송수신, MF4, SQLite/DBC/CDD/진단, arbitrary ASC/BLF dialect 및 raw error/event 재작성은 이번 검증 범위 밖이다."]
+              "장비 송수신, MF4, SQLite/DBC/CDD/진단, arbitrary ASC/BLF dialect와 error/event의 교차 포맷 의미 변환은 이번 검증 범위 밖이다."]
     (ROOT / "docs/validation.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("Generated docs/validation.md, docs/sample-manifest.json, tests/fixtures/manifest.json")
 

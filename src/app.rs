@@ -39,6 +39,12 @@ pub struct InputArgs {
     pub input: String,
     #[arg(long, value_enum)]
     pub input_format: Option<Format>,
+    /// Explicit channel/name assignments for symbolic ASC CAN IDs.
+    #[arg(long)]
+    pub id_map: Option<PathBuf>,
+    /// Preserve bounded native records and CAN annotations in the same ASC/BLF format.
+    #[arg(long)]
+    pub preserve_records: bool,
     #[arg(long, value_enum, default_value = "error")]
     pub unsupported: Unsupported,
     #[arg(long)]
@@ -185,6 +191,11 @@ pub struct Report {
     pub frames_written: u64,
     pub issues: u64,
     pub issues_outside_selection: u64,
+    pub issues_preserved: u64,
+    pub native_records_written: u64,
+    pub preserved_counts: BTreeMap<String, u64>,
+    pub id_map: Option<crate::id_map::Document>,
+    pub mapped_frames: u64,
     pub issue_counts: BTreeMap<String, u64>,
     pub issue_examples: Vec<Issue>,
     pub omitted_issue_examples: u64,
@@ -226,6 +237,39 @@ pub fn validate(args: &InputArgs, op: &Operation) -> Result<()> {
         "stdin requires --input-format jsonl"
     );
     Filter::new(args.clone())?;
+    if let Some(path) = &args.id_map {
+        ensure!(args.input != "-", "ID mapping requires ASC file input");
+        crate::id_map::IdMap::load(path)?;
+        if let Some(w) = op.write_args() {
+            ensure!(
+                !w.output.exists() || !same_file::is_same_file(path, &w.output)?,
+                "output cannot replace ID map input"
+            );
+        }
+    }
+    if args.preserve_records {
+        let writing = op
+            .write_args()
+            .context("preserve-records requires file output")?;
+        ensure!(
+            matches!(
+                formats::output_format(&writing.output, writing.format)?,
+                Format::Asc | Format::Blf
+            ),
+            "preserve-records requires ASC or BLF output"
+        );
+        ensure!(
+            args.id_map.is_none(),
+            "preserve-records and ID mapping cannot be combined"
+        );
+        ensure!(args.id.is_empty() && args.id_kind.is_none() && args.direction.is_none(), "preserve-records supports time/channel filters only; ID/direction cannot select opaque events");
+        if let Operation::Replay { repeat, .. } = op {
+            ensure!(
+                *repeat == 1,
+                "preserve-records cannot repeat opaque records with unknown timestamps"
+            );
+        }
+    }
     if let Operation::Replay {
         speed, repeat, gap, ..
     } = op
@@ -310,7 +354,10 @@ pub fn run(
     let result = execute(args.clone(), &op, &cancel, controls.as_ref(), &mut report);
     report.elapsed_ms = clock.now().as_millis();
     report.status = match &result {
-        Ok(()) if report.issues > report.issues_outside_selection || !report.losses.is_empty() => {
+        Ok(())
+            if report.issues > report.issues_outside_selection + report.issues_preserved
+                || !report.losses.is_empty() =>
+        {
             "partial"
         }
         Ok(()) => "complete",
@@ -354,14 +401,30 @@ fn execute(
     let output_format = writing
         .map(|w| formats::output_format(&w.output, w.format))
         .transpose()?;
+    let id_map = args
+        .id_map
+        .as_ref()
+        .map(|path| crate::id_map::IdMap::load(path).map(std::sync::Arc::new))
+        .transpose()?;
+    report.id_map = id_map.as_ref().map(|map| map.document.clone());
     let mut reader = formats::open_cancellable_reader(
         &args.input,
         args.input_format,
         filter.limits(),
         cancel.clone(),
     )?;
+    reader.configure(args.preserve_records, id_map.clone())?;
     let mut pending = reader.next_item()?;
     report.metadata = reader.metadata().clone();
+    if args.preserve_records {
+        ensure!(
+            matches!(
+                (reader.metadata().format.as_str(), output_format),
+                ("asc", Some(Format::Asc)) | ("blf", Some(Format::Blf))
+            ),
+            "native records require same-format output; cross-format preservation is unsupported"
+        );
+    }
     if matches!(op, Operation::Info { scan: false }) {
         report.status = "header-only".into();
         serde_json::to_writer_pretty(io::stdout().lock(), &report.metadata)?;
@@ -373,7 +436,14 @@ fn execute(
         .transpose()?;
     let mut writer = atomic
         .as_ref()
-        .map(|o| formats::make_writer(o.file()?, output_format.unwrap(), reader.metadata()))
+        .map(|o| {
+            formats::make_writer_with_preservation(
+                o.file()?,
+                output_format.unwrap(),
+                reader.metadata(),
+                args.preserve_records,
+            )
+        })
         .transpose()?;
     let (repeat, gap) = if let Operation::Replay { repeat, gap, .. } = op {
         (*repeat, *gap)
@@ -416,6 +486,7 @@ fn execute(
     };
     let mut stopped_by_limit = false;
     for cycle in 0..repeat {
+        let mut mapping_seen = 0;
         let mut first_cycle = None;
         let mut last_cycle = None;
         loop {
@@ -427,8 +498,12 @@ fn execute(
             let Some(item) = item else {
                 break;
             };
+            let mapped = reader.metadata().mapped_frames;
+            report.mapped_frames += mapped - mapping_seen;
+            mapping_seen = mapped;
             match item {
-                ReadItem::Issue(issue) => {
+                ReadItem::Issue(mut issue) => {
+                    let native = issue.native.take();
                     report.issues += 1;
                     increment(&mut report.issue_counts, format!("{:?}", issue.kind))?;
                     if report.issue_examples.len() < 100 {
@@ -439,6 +514,35 @@ fn execute(
                     if !filter.time_channel(issue.timestamp_ns, issue.channel) {
                         report.issues_outside_selection += 1;
                         continue;
+                    }
+                    if args.preserve_records {
+                        if let Some(native) = &native {
+                            if let Some(t) = issue.timestamp_ns {
+                                if previous.is_some_and(|p| t < p) {
+                                    report.regressions += 1;
+                                }
+                                previous = Some(t);
+                            }
+                            if let Some(scheduler) = &mut scheduler {
+                                scheduler
+                                    .wait_optional(issue.timestamp_ns, cancel, controls)
+                                    .with_context(|| {
+                                        format!("replay native record at {:?}", issue.location)
+                                    })?;
+                            }
+                            writer
+                                .as_mut()
+                                .context("native records require writer")?
+                                .write_native(native)?;
+                            report.native_records_written += 1;
+                            report.issues_preserved += 1;
+                            increment(&mut report.preserved_counts, format!("{:?}", issue.kind))?;
+                            if let Some(t) = issue.timestamp_ns {
+                                report.output_first_timestamp_ns.get_or_insert(t);
+                                report.output_last_timestamp_ns = Some(t);
+                            }
+                            continue;
+                        }
                     }
                     let corrupted = issue.kind == IssueKind::CorruptedRegion;
                     if corrupted && !args.recover {
@@ -509,6 +613,7 @@ fn execute(
                     report.output_first_timestamp_ns.get_or_insert(output_time);
                     report.output_last_timestamp_ns = Some(output_time);
                     if writer.is_some()
+                        && !args.preserve_records
                         && matches!(output_format, Some(Format::Asc | Format::Blf))
                         && output_frame.direction() == Direction::Unknown
                     {
@@ -521,7 +626,17 @@ fn execute(
                             .with_context(|| format!("replay at {:?}", record.location))?;
                     }
                     if let Some(writer) = &mut writer {
-                        writer.write_frame(&output_frame)?;
+                        if args.preserve_records {
+                            writer.write_native(
+                                record
+                                    .native
+                                    .as_ref()
+                                    .context("frame has no native representation")?,
+                            )?;
+                            report.native_records_written += 1;
+                        } else {
+                            writer.write_frame(&output_frame)?;
+                        }
                         report.frames_written += 1;
                     } else if matches!(op, Operation::Replay { .. } | Operation::View { .. }) {
                         if matches!(
@@ -583,6 +698,7 @@ fn execute(
             );
         }
         reader = formats::open_reader(&args.input, args.input_format, filter.limits())?;
+        reader.configure(args.preserve_records, id_map.clone())?;
         pending = reader.next_item()?;
     }
     report.scan_complete = !stopped_by_limit;
@@ -595,11 +711,12 @@ fn execute(
         {
             loss(report, &allowed, "field:source-metadata")?;
         }
-        if report
-            .metadata
-            .notes
-            .iter()
-            .any(|s| s == "frame annotations")
+        if !args.preserve_records
+            && report
+                .metadata
+                .notes
+                .iter()
+                .any(|s| s == "frame annotations")
         {
             loss(report, &allowed, "field:format-metadata")?;
         }
