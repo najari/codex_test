@@ -1,8 +1,10 @@
-# CANLOG-RS 설계서 — 보완판 v0.3
+# CANLOG-RS 설계서 — 보완판 v0.4
 
 > Rust 기반 ASC / BLF / MF4 로그 분석·변환 CLI 및 Automotive Data Engine
 
 ## 개정 범위와 문서 상태
+
+v0.4(2026-10-03)는 검토에서 발견한 다섯 계약을 본문에 반영했다. 12장은 clock/timeline 입력 조건, 13장은 responder별 UDS 상태, 15장은 구간 품질·issue·checkpoint 스키마, 24·29장은 policy 우선순위, 34.3장은 상태를 잃지 않는 재개 방식으로 갱신했다. 관련 테스트와 phase 완료 조건도 강화했다.
 
 v0.3에서는 `tomrford/gocan`과 `ecubus/EcuBus-Pro`의 코드를 검토해 34장의 계약을 추가했다. 상세 근거와 지원 범위 비교는 [별도 검토서](gocan-ecubus-review.md)에 기록했다.
 
@@ -520,7 +522,17 @@ ISO-TP 계층은 **오프라인 수동 분석기**다. CAN을 송신하거나 FC
 
 ### 12.1 연결 설정과 상태
 
-Connection은 source/channel, physical/functional addressing, request/response ID 종류와 값, addressing mode(normal/extended/mixed), 필요 시 address byte로 식별한다. 단순 `(request_id, response_id)`만으로 모든 연결을 구분하지 않는다. CAN FD와 PCI의 지원 조합도 profile에 선언한다.
+Connection은 **source revision + timeline key + channel + route + address mode**로 식별한다. route에는 physical/functional 구분, request/response ID 종류와 값, 필요한 address byte와 responder 식별 규칙이 포함된다. 단순 `(request_id, response_id)`만으로 모든 연결을 구분하지 않는다. CAN FD/PCI 지원 조합도 profile에 선언한다.
+
+진단 planner는 입력을 reassembly에 전달하기 전에 시간 기준을 검증한다.
+
+- 하나의 source clock이면 그 clock을 기준으로 timeline을 만든다. 여러 clock이면 명시적인 mapping이 있어야 하나의 timeline으로 결합한다. UTC origin이 우연히 같다는 이유로 결합하지 않는다.
+- mapping이 없으면 각 clock을 독립 분석한다. 요청과 응답이 다른 clock에 있어 결합이 필요한 route는 실행 전에 설정 오류로 거부한다. 다른 clock의 상태나 timeout을 공유하지 않는다.
+- timeline key에는 source revision, 참여 clock 목록과 mapping hash, 목표 clock, 순서 정책을 포함한다. mapping이 바뀌면 diagnostic cache/checkpoint는 무효다. v1은 source별 진단이며 여러 파일을 잇는 진단은 별도 명시 기능이다.
+- 목표 timeline의 입력은 nondecreasing 순서여야 한다. 같은 시각은 원본 ordinal로 결정한다. metadata가 unknown이면 순서를 검사하고, 역행을 발견하면 기본 동작은 중단이다. 정렬/reorder가 구현되지 않은 phase에서는 미지원으로 거부한다. 품질을 낮춰 시간순서가 틀린 세션을 정상 완료시키지 않는다.
+- 순서가 확정되지 않은 scan은 EOF 또는 검증된 watermark 전에 diagnostic coverage를 complete로 확정하지 않는다. 원본 순서와 변환 시간은 모두 provenance에 남긴다.
+
+저장된 `clock_id`는 분석에서 선택한 목표 clock이며 `timeline_key`는 mapping/순서의 identity다. 원본 frame의 clock/ordinal 참조는 별도로 보존한다.
 
 방향별 reassembly 상태는 `Idle → Receiving → Complete`이며 `Incomplete/Aborted/ProtocolViolation`을 별도로 기록한다. SF/FF/CF/FC, CF sequence의 modulo-16 증가, 중복/누락, 새 FF로 인한 중단, 마지막 CF의 선언 길이와 padding 처리를 정의한다. 완성된 payload만 CDD 기본 decode에 전달한다.
 
@@ -551,18 +563,49 @@ ISO-TP 완료 payload → 최소 UDS envelope 분류 → Transaction Matcher →
 - 매칭 key는 connection, ECU 대상, service별 discriminator(DID/subfunction/routine/block sequence 등), 시간 window를 포함한다.
 - `response SID = request SID + 0x40`만으로 매칭하지 않는다. `0x7f, request SID, NRC` 구조와 service별 echo 필드를 확인한다.
 - `0x22`는 여러 DID를 한 요청에 포함할 수 있다. `0x19` 등 가변 구조를 단일 `identifier` 열로 축약하지 않는다.
-- `0x78 ResponsePending`은 중간 응답으로 누적하고 configured P2* 관측 window를 적용한다. 같은 요청의 최종 응답을 계속 찾는다. P2/P2*는 설정 또는 근거가 확인된 데이터에서 가져오며 무제한 연장하지 않는다.
+- `0x78 ResponsePending`은 해당 responder의 중간 응답으로 누적한다. 그 responder의 P2*만 갱신하고 다른 ECU의 deadline은 연장하지 않는다. P2/P2*와 전체 관측 상한은 13.3장의 규칙을 따른다.
 - suppress-positive-response가 적용되는 서비스는 부재를 무조건 실패로 판단하지 않는다. subfunction flag를 적용 가능한 서비스에서만 해석한다.
 - functional request는 여러 ECU 응답을 받을 수 있어 request 1개에 response N개 구조가 필요하다. 응답이 없는 경우에도 ECU 실패를 단정하지 않는다.
 - outstanding 요청, 반복 요청, 관측되지 않은 요청, 애매한 후보는 `ambiguous/orphan`으로 남긴다. 임의로 가장 최근 요청에 붙이지 않는다.
 
 ### 13.2 결과와 latency
 
-Transaction 결과는 `Positive`, `Negative`, `PendingOnly`, `NoResponseObserved`, `SuppressedExpected`, `Ambiguous`, `Incomplete`로 구분한다. 분석 window와 capture 품질도 기록한다. 로그만으로 ECU 통신 장애를 확정하는 상태명은 사용하지 않는다.
+각 responder의 결과는 `Positive`, `Negative`, `PendingOnly`, `NoResponseObserved`, `SuppressedExpected`, `Ambiguous`, `Incomplete`로 구분한다. 처리 중 상태와 최종 결과는 13.3장대로 분리한다. Transaction에는 responder별 결과 목록과 집계 상태를 두며 서로 다른 결과가 있으면 `Mixed`로 표시한다. 한 ECU의 positive를 요청 전체 성공으로 바꾸지 않는다. 분석 window/capture 품질도 별도 기록하고 로그만으로 ECU 장애를 확정하지 않는다.
 
 Latency는 요청 payload 마지막 frame → 응답 payload 첫 frame 시간을 기본으로 하고, 요청 시작 → 최종 응답 완료 시간도 별도 저장한다. 단일 `duration_ns`의 기준을 숨기지 않는다. 음수 latency는 timestamp 문제로 보고한다.
 
 초기 서비스 범위: `0x10/11/14/19/22/27/2E/31/34/36/37`의 envelope/matching 및 제공된 CDD definition의 decode. SID 목록이 곧 모든 서비스 변종과 제조사 확장을 지원한다는 의미는 아니다. 지원 service profile과 fixture coverage를 공개한다.
+
+### 13.3 Functional UDS의 responder별 상태와 관측 종료
+
+상태 key는 `(transaction key, timeline key, responder key)`다. responder key는 route의 physical 응답 endpoint와 address 정보로 결정하며, SID나 payload 내용만으로 ECU를 추측하지 않는다.
+
+| 처리 상태 | 사건 | 다음 상태 / 관측 결과 |
+|---|---|---|
+| Waiting | 기대 responder의 response 시작 후보 | Receiving; payload 완성 후 service/echo 검증 |
+| Waiting/Receiving | 유효한 `0x78` | Pending; 해당 ECU의 pending count와 P2* 갱신 |
+| Receiving/Pending | 유효한 최종 positive/negative | FinalPositive/FinalNegative |
+| Waiting | 충분한 관측 구간에서 P2 만료 | NoResponseObserved |
+| Pending | 충분한 관측 구간에서 P2*/전체 상한 만료 | PendingOnly |
+| Receiving | ISO-TP 완료 불가 | Incomplete |
+| 열린 상태 | EOF/window 경계/gap으로 관측 부족 | Incomplete 또는 Ambiguous; timeout으로 단정하지 않음 |
+
+P2는 요청 마지막 frame부터 응답 첫 frame까지 평가한다. P2*는 pending 응답 마지막 frame부터 다음 응답 첫 frame까지 평가한다. payload 완료/decoder 호출 시각으로 P2를 계산하지 않는다. 진행 중인 응답 reassembly가 있으면 그 후보를 해소하기 전에 NoResponseObserved를 확정하지 않으며, 후보가 다른 service의 데이터면 요청 응답으로 인정하지 않는다.
+
+각 responder는 설정 또는 검증된 정보에서 얻은 `p2_ns`, `p2_star_ns`, deadline을 가진다. `transaction_max_duration_ns`는 필수 유한 상한이며 request last time을 기준으로 계산한다. 반복 pending도 이 상한을 넘기지 않는다. clock 변환/더하기는 overflow를 검사한다. 이 값들은 로그 관측 정책이며 ECU의 위반을 직접 증명하는 기본 상수가 아니다.
+
+Functional responder scope는 다음과 같이 명시한다.
+
+- `configured`: 기대 ECU 집합을 route에 지정한다. 각 ECU의 상태·타이머를 독립 생성하고 응답하지 않은 ECU도 관측 결과에 남긴다.
+- `observed_only`: 기대 집합을 모를 때 사용한다. 관측된 responder만 결과에 넣으며, 전 ECU 응답 완료나 부재 ECU 성공/실패를 주장하지 않는다. 새 responder가 들어와도 고정 전체 관측 상한은 연장하지 않는다.
+- Physical route는 `physical` scope로 하나의 지정 responder를 관리한다.
+
+Transaction lifecycle은 `Open/Closed`, close reason은 `responders_final/observation_limit/eof/window_end/gap`으로 둔다. configured scope는 모두 final이거나 관측 상한에서 닫는다. observed_only는 전체 관측 상한 또는 입력 경계까지 후보를 받는다. **Closed는 분석이 끝났다는 뜻이며 모든 ECU가 성공했다는 뜻이 아니다.**
+
+집계는 responder별 최종 상태 건수와 미완료 여부로 표현한다. 동일한 최종 상태만 있으면 해당 상태를 요약하고, 둘 이상이면 Mixed다. observed_only에서 응답이 하나도 없으면 충분한 관측 구간에서는 transaction 수준의 NoResponseObserved, 관측 부족이면 Incomplete로 표시하며 임의 ECU나 무응답 ECU 건수를 생성하지 않는다. 기대 집합·관측 종료 이유·quality를 항상 함께 출력한다. SuppressedExpected는 규격상 적용되는 요청에만 쓰며, negative가 관측되면 해당 ECU의 결과는 Negative다.
+
+예: ECU A positive 뒤 ECU B pending이면 A는 FinalPositive, B는 Pending이고 transaction은 Open이다. B의 반복 pending이 A나 다른 ECU의 P2를 갱신하지 않는다. B가 최종 negative이면 close 시 summary는 Mixed이고 A/B의 원시 결과는 각각 보존한다.
+
 
 ---
 
@@ -704,31 +747,105 @@ CREATE TABLE log_database_map (
 CREATE TABLE cache_entries (
     id INTEGER PRIMARY KEY,
     source_revision_id INTEGER NOT NULL REFERENCES source_revisions(id) ON DELETE CASCADE,
-    semantic_key TEXT NOT NULL, -- signal/DB hash/engine/settings/profile 포함
+    semantic_key TEXT NOT NULL, -- signal/result kind, DB/engine/settings/timeline identity
+    processing_key TEXT NOT NULL, -- parser profile + parse/unsupported policy 등의 정규화 hash
+    parse_policy TEXT NOT NULL CHECK(parse_policy IN ('strict','recover')),
+    unsupported_policy TEXT NOT NULL CHECK(unsupported_policy IN ('error','skip')),
     UNIQUE(source_revision_id, semantic_key),
     UNIQUE(source_revision_id, id)
 );
 
+CREATE TABLE processing_issues (
+    id INTEGER PRIMARY KEY,
+    source_revision_id INTEGER NOT NULL REFERENCES source_revisions(id) ON DELETE CASCADE,
+    processing_key TEXT NOT NULL,
+    issue_key TEXT NOT NULL, -- 재독 시 같은 issue를 식별하는 안정적 key
+    origin TEXT NOT NULL CHECK(origin IN ('parser','capture','decode','ordering')),
+    code TEXT NOT NULL,
+    clock_id INTEGER,
+    min_time_ns INTEGER, -- 알려진 영향 시간의 포함 경계; 점 event도 표현 가능
+    max_time_ns INTEGER,
+    first_ordinal INTEGER,
+    last_ordinal INTEGER,
+    file_offset_start INTEGER,
+    file_offset_end INTEGER,
+    lost_record_count INTEGER CHECK(lost_record_count >= 0), -- NULL은 건수 불명
+    message TEXT NOT NULL, -- payload dump를 포함하지 않는 설명
+    UNIQUE(source_revision_id, processing_key, issue_key),
+    UNIQUE(source_revision_id, id),
+    FOREIGN KEY(source_revision_id, clock_id) REFERENCES clocks(source_revision_id, id) ON DELETE CASCADE,
+    CHECK((min_time_ns IS NULL AND max_time_ns IS NULL) OR
+          (min_time_ns IS NOT NULL AND max_time_ns IS NOT NULL AND min_time_ns <= max_time_ns)),
+    CHECK((first_ordinal IS NULL AND last_ordinal IS NULL) OR
+          (first_ordinal IS NOT NULL AND last_ordinal IS NOT NULL AND first_ordinal >= 0 AND first_ordinal <= last_ordinal)),
+    CHECK((file_offset_start IS NULL AND file_offset_end IS NULL) OR
+          (file_offset_start IS NOT NULL AND file_offset_end IS NOT NULL AND file_offset_start >= 0 AND file_offset_start <= file_offset_end))
+);
+
 CREATE TABLE cache_coverage (
-    cache_entry_id INTEGER NOT NULL REFERENCES cache_entries(id) ON DELETE CASCADE,
-    clock_id INTEGER NOT NULL REFERENCES clocks(id) ON DELETE CASCADE,
+    source_revision_id INTEGER NOT NULL,
+    cache_entry_id INTEGER NOT NULL,
+    clock_id INTEGER NOT NULL,
     start_ns INTEGER NOT NULL,
     end_ns INTEGER NOT NULL,
     state TEXT NOT NULL CHECK(state IN ('complete','partial','building')),
+    quality_state TEXT NOT NULL CHECK(quality_state IN ('clean','degraded','unknown')),
     PRIMARY KEY(cache_entry_id, clock_id, start_ns, end_ns),
-    CHECK(start_ns < end_ns)
+    UNIQUE(source_revision_id, cache_entry_id, clock_id, start_ns, end_ns),
+    FOREIGN KEY(source_revision_id, cache_entry_id) REFERENCES cache_entries(source_revision_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(source_revision_id, clock_id) REFERENCES clocks(source_revision_id, id) ON DELETE CASCADE,
+    CHECK(start_ns < end_ns),
+    CHECK(state = 'complete' OR quality_state = 'unknown')
 );
 
+CREATE TABLE cache_coverage_issues (
+    source_revision_id INTEGER NOT NULL,
+    cache_entry_id INTEGER NOT NULL,
+    clock_id INTEGER NOT NULL,
+    start_ns INTEGER NOT NULL,
+    end_ns INTEGER NOT NULL,
+    issue_id INTEGER NOT NULL,
+    PRIMARY KEY(cache_entry_id, clock_id, start_ns, end_ns, issue_id),
+    FOREIGN KEY(source_revision_id, cache_entry_id, clock_id, start_ns, end_ns)
+        REFERENCES cache_coverage(source_revision_id, cache_entry_id, clock_id, start_ns, end_ns) ON DELETE CASCADE,
+    FOREIGN KEY(source_revision_id, issue_id) REFERENCES processing_issues(source_revision_id, id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER coverage_issue_requires_nonclean
+BEFORE INSERT ON cache_coverage_issues
+WHEN EXISTS (
+    SELECT 1 FROM cache_coverage c
+    WHERE c.cache_entry_id = NEW.cache_entry_id AND c.clock_id = NEW.clock_id
+      AND c.start_ns = NEW.start_ns AND c.end_ns = NEW.end_ns AND c.quality_state = 'clean'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'coverage with an issue cannot be clean');
+END;
+
+CREATE TRIGGER coverage_cannot_hide_issues
+BEFORE UPDATE OF quality_state ON cache_coverage
+WHEN NEW.quality_state = 'clean' AND EXISTS (
+    SELECT 1 FROM cache_coverage_issues i
+    WHERE i.cache_entry_id = OLD.cache_entry_id AND i.clock_id = OLD.clock_id
+      AND i.start_ns = OLD.start_ns AND i.end_ns = OLD.end_ns
+)
+BEGIN
+    SELECT RAISE(ABORT, 'coverage with an issue cannot be clean');
+END;
+
 CREATE TABLE signal_cache (
-    cache_entry_id INTEGER NOT NULL REFERENCES cache_entries(id) ON DELETE CASCADE,
-    clock_id INTEGER NOT NULL REFERENCES clocks(id) ON DELETE CASCADE,
+    source_revision_id INTEGER NOT NULL,
+    cache_entry_id INTEGER NOT NULL,
+    clock_id INTEGER NOT NULL,
     timestamp_ns INTEGER NOT NULL,
     source_ordinal INTEGER NOT NULL CHECK(source_ordinal >= 0),
     sample_ordinal INTEGER NOT NULL CHECK(sample_ordinal >= 0),
     value_kind TEXT NOT NULL CHECK(value_kind IN ('i64','u64','f64','bool','text','bytes','missing')),
     value_blob BLOB NOT NULL, -- versioned tagged codec; u64를 REAL로 변환하지 않음
     quality TEXT NOT NULL,
-    PRIMARY KEY(cache_entry_id, source_ordinal, sample_ordinal)
+    PRIMARY KEY(cache_entry_id, source_ordinal, sample_ordinal),
+    FOREIGN KEY(source_revision_id, cache_entry_id) REFERENCES cache_entries(source_revision_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(source_revision_id, clock_id) REFERENCES clocks(source_revision_id, id) ON DELETE CASCADE
 );
 CREATE INDEX signal_time_idx ON signal_cache(cache_entry_id, clock_id, timestamp_ns);
 
@@ -736,28 +853,76 @@ CREATE TABLE uds_transactions (
     id INTEGER PRIMARY KEY,
     source_revision_id INTEGER NOT NULL REFERENCES source_revisions(id) ON DELETE CASCADE,
     clock_id INTEGER NOT NULL,
-    analysis_key TEXT NOT NULL, -- CDD/route/timeout/matcher version等
+    timeline_key TEXT NOT NULL,
+    analysis_key TEXT NOT NULL, -- processing/timeline + CDD/route/timeout/matcher identity
+    transaction_key TEXT NOT NULL, -- route + request ordinal; orphan은 response 참조 기반
     connection_key TEXT NOT NULL,
+    responder_scope TEXT NOT NULL CHECK(responder_scope IN ('physical','configured','observed_only')),
+    lifecycle_state TEXT NOT NULL CHECK(lifecycle_state IN ('open','closed')),
+    close_reason TEXT CHECK(close_reason IN ('responders_final','observation_limit','eof','window_end','gap')),
     request_first_ns INTEGER,
     request_last_ns INTEGER,
     service_id INTEGER CHECK(service_id BETWEEN 0 AND 255),
-    status TEXT NOT NULL,
+    summary_status TEXT NOT NULL,
+    quality_state TEXT NOT NULL CHECK(quality_state IN ('clean','degraded','unknown')),
     request_payload BLOB,
-    FOREIGN KEY(source_revision_id, clock_id) REFERENCES clocks(source_revision_id, id) ON DELETE CASCADE
+    UNIQUE(source_revision_id, analysis_key, transaction_key),
+    FOREIGN KEY(source_revision_id, clock_id) REFERENCES clocks(source_revision_id, id) ON DELETE CASCADE,
+    CHECK((lifecycle_state = 'open' AND close_reason IS NULL) OR (lifecycle_state = 'closed' AND close_reason IS NOT NULL)),
+    CHECK((request_first_ns IS NULL AND request_last_ns IS NULL) OR
+          (request_first_ns IS NOT NULL AND request_last_ns IS NOT NULL AND request_first_ns <= request_last_ns))
+);
+
+CREATE TABLE uds_responder_states (
+    transaction_id INTEGER NOT NULL REFERENCES uds_transactions(id) ON DELETE CASCADE,
+    responder_key TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN (
+        'waiting','receiving','pending','final_positive','final_negative',
+        'no_response_observed','pending_only','suppressed_expected','ambiguous','incomplete'
+    )),
+    p2_ns INTEGER NOT NULL CHECK(p2_ns > 0),
+    p2_star_ns INTEGER NOT NULL CHECK(p2_star_ns > 0),
+    deadline_ns INTEGER NOT NULL,
+    hard_deadline_ns INTEGER NOT NULL,
+    pending_count INTEGER NOT NULL CHECK(pending_count >= 0),
+    PRIMARY KEY(transaction_id, responder_key),
+    CHECK(deadline_ns <= hard_deadline_ns)
 );
 
 CREATE TABLE uds_responses (
     id INTEGER PRIMARY KEY,
-    transaction_id INTEGER NOT NULL REFERENCES uds_transactions(id) ON DELETE CASCADE,
+    transaction_id INTEGER NOT NULL,
     responder_key TEXT NOT NULL,
+    response_key TEXT NOT NULL, -- 원본 record refs에서 만든 재독 중복 제거 key
     first_ns INTEGER NOT NULL,
     last_ns INTEGER NOT NULL,
-    response_type TEXT NOT NULL,
+    response_type TEXT NOT NULL CHECK(response_type IN ('positive','negative','pending')),
     nrc INTEGER CHECK(nrc BETWEEN 0 AND 255),
     payload BLOB NOT NULL,
-    CHECK(first_ns <= last_ns)
+    UNIQUE(transaction_id, response_key),
+    FOREIGN KEY(transaction_id, responder_key) REFERENCES uds_responder_states(transaction_id, responder_key) ON DELETE CASCADE,
+    CHECK(first_ns <= last_ns),
+    CHECK((response_type = 'positive' AND nrc IS NULL) OR
+          (response_type = 'negative' AND nrc IS NOT NULL AND nrc != 120) OR
+          (response_type = 'pending' AND nrc IS NOT NULL AND nrc = 120))
 );
 CREATE INDEX uds_time_idx ON uds_transactions(source_revision_id, clock_id, request_first_ns);
+
+CREATE TABLE analysis_checkpoints (
+    job_key TEXT NOT NULL PRIMARY KEY,
+    source_revision_id INTEGER NOT NULL REFERENCES source_revisions(id) ON DELETE CASCADE,
+    processing_key TEXT NOT NULL,
+    analysis_key TEXT NOT NULL, -- processing/timeline + DB/assignment/route/query/engine/timeout/결과 schema
+    timeline_key TEXT NOT NULL,
+    read_ordinal INTEGER NOT NULL CHECK(read_ordinal >= -1),
+    commit_ordinal INTEGER NOT NULL CHECK(commit_ordinal >= -1),
+    replay_from_ordinal INTEGER NOT NULL CHECK(replay_from_ordinal >= 0),
+    replay_anchor_blob BLOB NOT NULL, -- versioned format-specific anchor/state
+    sink_kind TEXT NOT NULL,
+    CHECK(commit_ordinal <= read_ordinal),
+    CHECK(replay_from_ordinal - 1 <= read_ordinal)
+);
+
 ```
 
 `first_time_ns/last_time_ns`는 관측 순서상의 첫/마지막 시각이 아니라 최소/최대 시각이다. 입력 시간이 역행해도 후보 검색에서 누락하지 않는다.
@@ -772,15 +937,37 @@ CREATE INDEX uds_time_idx ON uds_transactions(source_revision_id, clock_id, requ
 
 ### Cache·원본 변경·DB 운영
 
-Cache key에는 원본 revision, DB content hash, channel/ECU assignment, engine/decoder 버전, signal identity, decode 설정을 포함한다. mtime/size는 저렴한 변경 감지 수단이며 content identity가 아니다. 빠른 fingerprint를 쓰면 보장 수준을 표시하고, 정확한 동일성이 필요한 작업에서는 full hash를 확인한다.
+Cache key에는 원본 revision, DB content hash, channel/ECU assignment, parser/engine/decoder 버전, signal/result identity, decode 설정, **parse/unsupported policy와 timeline mapping hash**를 포함한다. `processing_key`는 실제 parser/profile/policy 설정의 정규화 hash이고 `semantic_key`는 그 processing key를 포함한 결과 identity다. v1 cache lookup은 이 identity가 정확히 일치할 때만 재사용한다. recover/skip 결과를 strict/error 요청에 자동 재사용하지 않는다. 출력 sink의 loss 허용은 cache 품질을 clean으로 승격시키지 않는다.
+
+mtime/size는 저렴한 변경 감지 수단이며 content identity가 아니다. 빠른 fingerprint를 쓰면 보장 수준을 표시하고 정확한 동일성이 필요한 작업에서는 full hash를 확인한다.
 
 같은 path의 파일이 바뀌면 새 revision을 만들고 과거 index/cache를 현행 결과에 섞지 않는다. 스캔 전후 stat을 비교해 처리 중 변경을 감지하면 complete로 확정하지 않는다. 변경 중인 로그를 tail하는 기능은 후기에 명시적으로 추가한다.
 
-Coverage에는 `[start,end)`, clock, 성공 상태를 저장한다. 결과가 비어도 complete coverage는 기록할 수 있다. rows가 있다는 이유만으로 전구간 cache가 완성됐다고 판단하지 않는다. 중단된 building/partial을 자동 승격하지 않고, signal rows와 대응 coverage를 같은 transaction에서 확정한다.
+Coverage에는 `[start,end)`, 목표 clock, 처리 상태와 품질을 **독립적으로** 저장한다. `state=complete`는 필요한 context까지 처리가 끝났다는 뜻이며 데이터가 무손상이라는 뜻이 아니다.
+
+| quality_state | 의미 | 조회 동작 |
+|---|---|---|
+| clean | 확정된 의존 구간에서 알려진 issue가 없음 | 값과 provenance 반환; 미관측 손실까지 없음을 보장하지 않음 |
+| degraded | 영향이 확인된 gap/unsupported/decode 문제 등이 있음 | 값과 관련 issue를 함께 반환 |
+| unknown | 영향 범위·clock 대응·처리 완결성을 확정할 수 없음 | 불확실성 보고; 완전 데이터로 사용하지 않음 |
+
+원본 조회와 cache 조회는 값, source refs, **관련 issue/quality와 최종 종료 결과**를 동일하게 반환해야 한다. 읽은 bytes 같은 실행 통계는 다를 수 있다. recover로 EOF에 도달하면 complete/degraded 또는 complete/unknown일 수 있다. 빈 결과라도 손상과 정상 무관측을 구별한다.
+
+`processing_issues`에는 parser/capture/decode/ordering 문제와 원본 위치, 알려진 영향 clock/time/ordinal 범위, 건수 known/unknown을 저장한다. min/max time은 포함 경계이고 query 의존 구간과의 겹침으로 판단한다. 시간이나 영향 범위가 불명확하면 안전하게 해당 처리 구간 전체를 unknown으로 취급하며 관련 issue 연결을 생략하지 않는다. 실제 조회의 의존 구간에는 ISO-TP/UDS context와 signal join의 sample age도 포함한다.
+
+`cache_coverage_issues`로 각 coverage의 영향 issue를 연결한다. issue key는 source revision/processing key/위치/type 기반으로 안정적으로 생성해 재독 시 중복 집계하지 않는다. signal rows, issues, 연결, 최종 coverage, 같은 job의 checkpoint를 한 transaction에서 확정한다. building/partial은 완전 결과로 조회하지 않으며 둘의 quality는 unknown이다. complete/clean에 issue를 연결하거나 알려진 issue를 가진 coverage를 clean으로 바꾸는 것은 거부한다.
+
+진단 결과의 quality와 issue provenance도 같은 processing key의 기록으로 재구성한다. 원시 response 행이 있다는 이유만으로 transaction 또는 진단 관측 window가 완결됐다고 판단하지 않는다. 필요한 issue의 GC는 참조 coverage/analysis와 함께 처리한다.
 
 SQLite 연결마다 FK를 활성화한다. local writable DB에서는 WAL/busy timeout, 단일 writer queue, bounded batch transaction을 기본으로 한다. network filesystem/read-only에서는 WAL을 무조건 요구하지 않는다. schema version, migration, backup/checkpoint 절차를 정의하고 오래된 binary가 새로운 schema에 쓰지 못하게 한다.
 
-cache sample의 clock이 cache entry의 원본 revision에 속하는지, assignment role과 DB type이 일치하는지, semantic key가 정규화됐는지는 Application 계층에서 검증한다. 필요하면 후속 migration에서 composite FK/trigger로 강화한다. 위 SQL만으로 모든 domain 규칙을 보장한다고 주장하지 않는다.
+cache sample/coverage/issue의 clock과 원본 revision 일치는 composite FK로 검증한다. coverage의 issue와 processing key가 호환되는지, timeline mapping이 맞는지, assignment role/DB type, semantic key 정규화, UDS summary와 responder 상태의 일치는 Application transaction에서 검증한다. 이미 complete인 coverage는 수정하지 않고 새 generation으로 재계산한다. source/entry/range/issue key를 임의 UPDATE해서 quality trigger를 우회하지 않으며 위 SQL만으로 모든 domain 규칙을 보장한다고 주장하지 않는다.
+
+`analysis_key`는 processing/timeline key, DB/assignment/route/query/engine/timeout 및 결과 schema의 정규화 identity다. `job_key`는 이 identity로 실행하는 sink/result generation을 식별한다. 같은 job의 checkpoint를 다른 analysis key로 덮어쓰지 않는다. NULL·빈 key와 부정확한 canonical hash는 실행 전에 거부한다.
+
+UDS responder 상태는 해당 transaction의 목표 clock과 전체 deadline을 따른다. response key의 유일성은 재독 중복을 막으며, 한 ECU의 pending 갱신이 다른 ECU의 행을 바꾸지 않도록 transaction update 범위를 제한한다. Open transaction과 일부 responder 행이 commit됐더라도 완료 분석 결과로 공개하지 않는다.
+
+이 변경은 schema 초안의 확장이다. 기존 v0.3 DB가 있다면 migration으로 coverage/diagnostic cache를 invalid 처리해 재생성한다. 이전 행에 issue가 없다는 이유로 clean을 채워 넣지 않는다. 사용자 manifest/assignment와 원본은 보존한다.
 
 Cache에는 size quota/LRU 등 삭제 정책을 둔다. 재생성 가능한 cache를 삭제할 때 assignment/rule/catalog를 지우지 않는다. 진단 raw payload를 영구 저장하면 저장 범위·삭제 정책을 별도로 제공한다.
 
@@ -902,7 +1089,7 @@ tolerance:
   relative: 0.0
 ```
 
-판정식은 `abs(a-b) <= absolute + relative * abs(reference)`이고 이 예시의 reference는 DBC 값이다. sample 부재, invalid decode, 단위 불명, clock 대응 불가는 INCONCLUSIVE이며 PASS가 아니다. Report에 PASS/FAIL/INCONCLUSIVE 건수, sample 시각/age, 차이, source refs를 넣는다. 임계값은 차량·신호 사양으로 정하며 예시 수치를 일반적인 정답으로 사용하지 않는다.
+판정식은 `abs(a-b) <= absolute + relative * abs(reference)`이고 이 예시의 reference는 DBC 값이다. sample 부재, invalid decode, 단위 불명, clock 대응 불가, 의존 구간의 gap/unknown quality는 INCONCLUSIVE이며 PASS가 아니다. Report에 PASS/FAIL/INCONCLUSIVE 건수, sample 시각/age, 차이, source refs를 넣는다. 임계값은 차량·신호 사양으로 정하며 예시 수치를 일반적인 정답으로 사용하지 않는다.
 
 ```bash
 canlog validate drive.blf --workspace EPICD --rule voltage-check.yaml
@@ -935,7 +1122,7 @@ canlog
 
 각 command는 지원 phase/profile에서만 활성화한다. `info`는 헤더만으로 아는 값과 `--scan`으로 확정한 통계를 구분한다. header의 count를 실측값처럼 출력하지 않는다. `view/query`는 default limit을 명시하고, unlimited output은 명시 옵션으로 선택한다.
 
-대용량 결과는 stdout, progress/warnings는 stderr에 쓴다. 공통 옵션 후보는 `--input-format`, `--workspace`, `--strict|--recover`, `--unsupported error|skip`, `--loss-policy reject|allow`, `--report <path>`, `--memory-budget`, `--jobs`, `--limit`, `--overwrite`이다. 최종 인자 이름은 구현 시 고정한다.
+대용량 결과는 stdout, progress/warnings는 stderr에 쓴다. 공통 옵션 후보는 `--input-format`, `--workspace`, `--strict|--recover`, `--unsupported error|skip`, `--loss-policy reject|allow`, 반복 가능한 `--allow-loss <category[:limit]>`, `--report <path>`, `--memory-budget`, `--jobs`, `--limit`, `--overwrite`이다. 최종 인자 이름은 구현 시 고정한다.
 
 ### info
 
@@ -1103,16 +1290,39 @@ hardware/OS/compiler/engine 버전, 입력 checksum/compression/record 종류, w
 
 Error에는 kind와 source, format/profile, physical/logical 위치, ordinal, block/object type, 원인 chain을 넣는다. 시간이 알려졌으면 함께 기록한다. decode 실패와 파일 구조 손상을 구분한다.
 
-### 독립된 policy
+### Policy의 책임과 우선순위
 
 1. Parse policy: 기본 strict는 손상 시 중단하며 recover는 검증 가능한 경계에서 재개한다.
-2. Unsupported policy: error는 미지원 record에서 중단하며 skip은 위치·건수를 보고하고 제외한다.
+2. Unsupported policy: error는 미지원 record에서 중단하며 skip은 위치·건수를 보고하고 읽기를 계속한다. **skip은 출력 정보 손실의 허용을 의미하지 않는다.**
+3. Loss policy: convert/filter/cut/merge와 export의 표현 불가·예기치 않은 누락을 기본 reject로 처리한다. `allow`는 `--allow-loss`로 명시한 category와 한도만 허용한다. allow만 지정하고 허용 목록이 비어 있으면 설정 오류다.
+
+Loss category는 `unsupported-record`, `corrupted-region`, `field:<name>`, `time-quantization:<max-ns>`처럼 이름과 필요한 상한을 가진다. wildcard 일괄 허용은 v1에 두지 않는다. 허용 목록과 발생한 실제 손실은 report에 남긴다.
+
+사용자가 명시한 ID/channel/time filter, cut 범위, signal projection, MF4 raw bus subset 선택은 **의도한 selection**이다. `selected_out_count`로 따로 집계하며 loss reject의 대상이 아니다. 선택한 결과 안의 미지원 field/손상/예기치 않은 누락은 손실로 판정한다. 의도적 제외 여부를 증명할 수 없는 손상 구간은 보수적으로 다룬다.
+
+view/query/decode/diag/stats/validate의 관측 부족·원본 gap은 output encoding loss와 구분한다. recover/skip으로 분석을 계속하더라도 issue/quality를 결과에 포함하고 partial 또는 INCONCLUSIVE로 종료한다. sink가 요청한 field를 표현하지 못하면 이 분석 출력에도 loss reject를 적용한다.
+
+| 처리 상황 | Parse / Unsupported | Loss 설정 | 결과와 파일 출력 |
+|---|---|---|---|
+| 원본 정상, 명시 filter로 일부 제외 | strict/error | reject | 성공 0; 선택 결과 게시, selected-out 별도 집계 |
+| 선택 범위의 미지원 record | */error | 어떤 허용이든 | 처리 중단 1; file 미게시 |
+| 선택 범위의 미지원 record를 skip | */skip | reject | 재작성 시 손실 오류 1; file 미게시 |
+| 같은 skip | */skip | allow unsupported-record | 재작성 부분 성공 3; file 게시 + 손실 report |
+| 원본 손상 | strict/* | allow corrupted-region 포함 | parser 중단 1; loss 허용이 strict를 우회하지 않음 |
+| 복구 가능한 손상 | recover/* | reject 또는 category 불일치 | 재작성 오류 1; file 미게시 |
+| 같은 손상 | recover/* | allow corrupted-region | 재작성 부분 성공 3; file 게시 + gap report |
+| recover/skip 분석 | recover/skip | 출력 schema 손실 없음 | 분석 계속, 영향 구간은 degraded/unknown; 3 또는 validate 4/5 |
+| timestamp 양자화 | 정상 읽기 | 허용 category/한도 없음 | 손실 오류 1; file 미게시 |
+| timestamp 양자화 | 정상 읽기 | time-quantization 한도 이내 | 부분 성공 3; 반올림 최대 오차 report |
+| 허용 목록 없는 allow | * | allow, 목록 비어 있음 | 실행 전 설정 오류 2 |
+
+`*`는 해당 축이 이 사건에 영향을 주지 않는다는 뜻이다. file 미게시 행은 temp를 정리하고 기존 출력은 보존한다. stdout은 이미 쓴 bytes를 되돌릴 수 없으므로 최종 오류와 partial report를 반드시 남긴다. strict/unsupported error/I/O/resource failure가 loss 허용보다 우선한다.
 
 정상적인 unknown object와 손상은 다른 문제다. recover여도 I/O 권한, 자원 상한, 쓰기 실패, 신뢰할 재동기화 경계 부재는 중단 사유다.
 
 ASC는 다음 행, BLF는 검증된 object/container 경계, MF4는 검증 가능한 block link를 사용한다. magic byte만으로 정상 경계를 판정하지 않고 길이/alignment/link/file 범위를 확인한다. 재동기화 탐색량과 시간도 제한한다.
 
-Report는 정상/미지원/제외/손상/복구/incomplete를 구분한다. 모르는 건수는 unknown이다. gap을 진단·query에 전달하고 누락 구간을 근거로 PASS를 만들지 않는다.
+Report는 정상/의도적 selection/미지원/손실/손상/복구/incomplete를 구분한다. 모르는 건수는 unknown이다. gap을 진단·query에 전달하며 cached 결과에서도 그대로 유지한다. 비교 sample이 있어도 필요한 의존 구간에 영향 gap 또는 unknown quality가 있으면 validation은 INCONCLUSIVE다. 관련 없는 구간임을 입증한 issue만 그 rule 판정에서 제외할 수 있다.
 
 ### 출력과 중단
 
@@ -1120,7 +1330,9 @@ Report는 정상/미지원/제외/손상/복구/incomplete를 구분한다. 모�
 
 SIGINT/CancelToken, disk full, SQLite busy, 중간 I/O 실패는 temp와 partial cache를 정리하며 complete로 표시하지 않는다. 부분 결과 보존은 명시 policy가 필요하고 sidecar에도 partial을 기록한다. stdout은 rollback할 수 없으므로 final status와 stderr report로 알린다.
 
-종료 코드안: `0` 완전 성공, `1` 실행/I/O/parse 실패, `2` 인자/설정 오류, `3` 허용된 부분 성공·손실, `4` validation FAIL, `5` validation INCONCLUSIVE. POSIX SIGINT는 `130`을 사용한다. partial을 성공 코드 0으로 숨기지 않는다.
+종료 코드는 `0` 완전 성공, `1` 실행/I/O/parse/loss-reject 실패, `2` 인자/설정 오류, `3` 허용된 부분 성공·손실·영향 품질 저하, `4` validation FAIL, `5` validation INCONCLUSIVE다. POSIX SIGINT는 130이다.
+
+복합 상황의 우선순위는 **명시 취소 130 → 설정 오류 2 → 실행 실패 1 → validation FAIL 4 → validation INCONCLUSIVE 5 → 부분 성공 3 → 성공 0**이다. 설정 검증은 실행 전에 한다. validate에서 FAIL과 INCONCLUSIVE가 함께 있으면 4를 반환하되 둘의 건수를 report에 남긴다. 불완전성을 0으로 숨기지 않는다.
 
 ---
 
@@ -1145,7 +1357,7 @@ round-trip은 지원 profile의 semantic equality를 검증한다. byte 보존�
 | Query/Export | 타입/결측/unit/sample age/context, 큰 정수, loss rejection, 원자적 출력/cancel/disk full |
 | CLI/App | 종료 코드, stdout/stderr/report, 실제 file 기반 end-to-end |
 
-Property tests는 core 불변 조건, 적용 가능한 decode round-trip, time conversion, index와 full scan 결과 일치를 다룬다. 같은 query/policy가 index 유무에 관계없이 같은 records/issues를 반환해야 한다.
+Property tests는 core 불변 조건, 적용 가능한 decode round-trip, time conversion, index와 full scan 결과 일치를 다룬다. 같은 query/policy가 index/cache 유무 및 재개 여부에 관계없이 같은 결과와 관련 issue/quality/종료 상태를 반환해야 한다. 실제 읽은 bytes 같은 실행 통계는 비교에서 제외한다.
 
 ASC, BLF, MF4, ISO-TP, query parser를 fuzz 대상으로 한다. panic, 무한 loop, 자원 상한 위반, 검증 전 allocation을 찾고 crash corpus를 회귀 fixture로 보존한다.
 
@@ -1154,6 +1366,22 @@ ASC, BLF, MF4, ISO-TP, query parser를 fuzz 대상으로 한다. panic, 무한 l
 Rust format/lint/unit/integration, supported feature matrix, Linux/Windows file 동작을 검사한다. 엔진이 없는 CI에서는 integration을 skip으로 표시하고 mock 성공을 실제 연동 완료로 부르지 않는다. 대용량 benchmark와 장시간 fuzz는 별도 job으로 운영할 수 있다.
 
 phase마다 실행 건수, passed/failed/skipped, fixture profile, 미지원 범위를 기록한다. zero-test 성공과 자체 Writer→자체 Reader 성공만으로 호환성을 주장하지 않는다. 외부 엔진 테스트도 이번 정적 검토와 실제 실행 결과를 구분한다.
+
+v0.4 추가 acceptance cases는 구현 완료를 위한 필수 gate다.
+
+| 계약 | 검증 입력 / 기대 결과 |
+|---|---|
+| safe replay | FF/CF 사이, request/response 사이, pending/final 사이에서 중단. uninterrupted와 같은 payload/transaction/issue, 중복 0 |
+| checkpoint 원자성 | commit 직전/직후 crash 주입. coverage와 checkpoint의 진행이 일치하며 미완료 상태를 건너뛰지 않음 |
+| cache 품질 | gap 있는 구간과 정상 빈 구간을 각각 cache. cached/원본 결과의 issue·quality·exit가 같고 recover cache를 strict에서 자동 재사용하지 않음 |
+| clock 격리 | 같은 channel/ID지만 서로 다른 clock의 FF/CF·request/response. unmapped 상태에서 결합 안 함; mapping 변경 시 cache/checkpoint 거부 |
+| responder timer | A positive, B 반복 pending, C 무응답. B가 A/C deadline을 바꾸지 않으며 각 최종 상태와 Mixed 집계 보존 |
+| response 시작 | 응답 첫 frame은 P2 이내, 마지막 CF는 P2 이후. payload 완료 시각 때문에 NoResponseObserved로 오판하지 않음 |
+| functional scope | configured 집합과 observed_only 각각 실행. unknown 집합에서 모든 ECU 성공/완료를 주장하지 않음 |
+| policy 조합 | 24장의 각 행과 category 한도 초과. exit/report/publish 및 기존 출력 보존이 표와 일치 |
+
+현재 문서 작업의 SQL 검증은 저장 제약을 확인하는 것이며 이 end-to-end acceptance cases의 구현·실행 완료를 뜻하지 않는다.
+
 
 ---
 
@@ -1166,9 +1394,9 @@ ASC/BLF의 올바른 streaming 변환부터 완성한다. MF4 전체 지원, 일
 | 1 Foundation | Core/time/channel/provenance, error/policy, Reader/Writer, CLI 골격 | 불변 조건·overflow·capability 검증, 최소 fixture의 CLI 처리 |
 | 2 ASC vertical slice | Reader/Writer, info/view/filter/convert/stats, CSV/JSONL/report | 선택 dialect의 Classic/FD 외부 비교, 원자적 출력, bounded memory |
 | 3 BLF | 지원 object/profile, container/carry, Reader/Writer | ASC↔BLF 의미 비교, 경계/손상/압축 상한, unknown report |
-| 4 Workspace/Index | manifest/revision/SQLite, ASC/BLF seek | index/full scan 일치, 원본 변경 감지, 재시작/migration, partial 재개 |
+| 4 Workspace/Index | manifest/revision/SQLite, ASC/BLF seek, issue/quality | index/cache/full scan의 결과·품질 일치, 원본 변경, 보수적 migration, checkpoint 원자성 |
 | 5 DBC | 실제 candb-engine adapter, assignment, typed decode/cache | engine commit 고정, 실제 DBC/multiplex/FD/u64/quality, cache 무효화 |
-| 6 ISO-TP/UDS/CDD | route, reassembly/matching, 실제 cdd-api adapter | incomplete/다중응답/pending/ambiguity, request context, experimental provenance |
+| 6 ISO-TP/UDS/CDD | timeline 검증, route/reassembly/matching, 실제 cdd-api adapter | safe replay 동등성, ECU별 timer/functional scope, clock 격리, request context/experimental provenance |
 | 7 MF4 Reader | 제한 profile metadata/measurement/CAN bus | capability 목록, 선택 channel의 bounded read, raw/physical/invalid/time |
 | 8 Query/Analysis | cross-signal alignment, temporal join, validation | clock/unit/context/INCONCLUSIVE, 결정적 결과 |
 | 9 Advanced Export | Parquet, merge/cut, 선택 MF4 Writer | 외부 Reader 검증, 손실 matrix, external sort/disk 상한 |
@@ -1239,7 +1467,7 @@ Application API ────┼──────── Python Binding
 | Frame/Signal/UDS → CSV/JSONL/Parquet | versioned export schema | 분석용 projection이며 원본 포맷 round-trip 보장 없음 |
 | 같은 포맷 read/write | support profile의 semantic subset | unknown object, vendor extension, metadata의 byte equality 보장 없음 |
 
-기본 `loss-policy=reject`다. metadata scan으로 미리 알 수 있는 손실은 preflight에서 거부한다. 처리 중 발견한 손실도 file publish 전에 실패시킨다. `allow`는 사용자가 선택한 범위의 손실만 허용하며 partial exit와 report를 남긴다. 누락을 숨긴 성공 결과를 만들지 않는다.
+기본 `loss-policy=reject`다. metadata scan으로 알 수 있는 손실은 preflight에서 거부하고 처리 중 발견한 손실도 file publish 전에 실패시킨다. `allow`와 명시 category/한도(`--allow-loss`)가 모두 있어야 해당 손실을 허용한다. parse/unsupported policy를 우회하지 않으며 옵션 조합·selection 예외·종료 코드는 **24장의 표를 단일 기준**으로 사용한다. 부분 성공에는 report와 종료 코드 3을 남긴다.
 
 Report에는 tool/profile version, input identity, emitted/dropped/unsupported/recovered counts, field losses, time rounding bounds, clock/channel mapping, partial 여부를 넣는다. 원본 byte copy와 semantic conversion은 다른 기능이다.
 
@@ -1314,6 +1542,8 @@ Plan은 signal 조건에 필요한 CAN IDs, ISO-TP context, DB binding, clock co
 
 v0.2 문서 검증 결과: 33개 장의 순서, code fence, TOML 예제 파싱을 확인했다. SQLite에서 schema 생성, 정상 데이터 삽입, 동일 timestamp의 복수 sample, 최대 u64의 BLOB 보존, 잘못된 ID/FK/coverage/anchor/origin 및 중복 sample 거부 7개 사례가 통과했다. 실제 로그 변환·engine 통합 테스트는 아직 실행하지 않았다.
 
+v0.4 문서 검증(2026-10-03): 34개 장의 순서, 39개 코드 블록의 시작·종료, TOML 파싱과 본문의 source 링크 11개 경로를 확인했다. SQLite 3.53.1에서 정상 상태 9개, 잘못된 상태 거부 31개 검사를 통과했다. 정상/손상 빈 coverage의 구분, issue/quality 보존, ECU별 상태·deadline의 독립 저장, pending NRC, 재독 key 중복 거부, read/commit/replay frontier 및 미commit checkpoint·coverage의 동시 rollback을 확인했다. 이 결과는 SQL 초안의 저장 제약 검증이며, 실제 crash 복구·분석 state machine·원본/cache/replay 동등성은 25장의 미실행 acceptance gate다.
+
 ---
 
 ## 34. gocan · EcuBus-Pro 검토를 반영한 추가 계약
@@ -1332,13 +1562,31 @@ LogReader에는 speed factor, pause 시간 보정, wall-clock sleep, CAN 송신�
 
 gocan의 active ISO-TP/UDS는 packet boundary와 test 사례를 참고하는 대상이다. 수동 로그 분석에서 FC를 보내거나 실제 통신 timeout을 그대로 쓰지 않는다. live transport, active replay, J1939/XCP/DoIP/HIL은 별도 후속 기능이며 기본 실행 경로에서 활성화하지 않는다.
 
-### 34.3 작업 cursor와 지속 checkpoint
+### 34.3 상태를 잃지 않는 작업 cursor와 지속 checkpoint
 
-RecordRef는 원본 식별이며 작업 진행 cursor와 구별한다. runtime cursor는 source revision과 ordinal 순서를 기준으로 다음 읽기 위치를 가리킨다. 시간 범위 `[start,end)`와 cursor의 포함/제외 규칙은 별도로 문서화한다. gocan의 process-local generation을 그대로 영구 ID로 쓰지 않는다.
+RecordRef는 원본 식별이고 runtime cursor는 source revision/ordinal의 읽기 위치다. cursor 범위와 시간 필터 `[start,end)`는 구분한다. gocan의 process-local generation을 영구 ID로 사용하지 않는다.
 
-영구 checkpoint는 source revision/content identity, parser/profile version, format-specific seek anchor, 마지막 확정 ordinal, query/decode 설정 hash, sink 종류와 상태를 포함한다. 원본·DB·설정이 바뀌면 거부하거나 새 작업으로 시작한다. 실패 시 진행을 자동으로 앞당겨 누락하지 않는다.
+MVP 진단 재개는 **safe replay**를 사용한다. format anchor만 복원하고 요청/세션 상태를 잃은 채 다음 응답부터 읽는 재개는 허용하지 않는다.
 
-재개는 sink가 허용할 때만 제공한다. SQLite batch는 commit된 coverage를 기준으로 재개할 수 있다. BLF/MF4 temp 파일은 포맷별 중단 복구가 구현·검증되지 않았으면 새 temp로 다시 생성한다. checkpoint 저장이 Writer append/recovery 지원을 의미하지 않는다. 재시도 중복 제거는 ordinal 기반 transaction 등 sink별 계약이 필요하며 exactly-once를 일반 보장으로 선언하지 않는다.
+| checkpoint 항목 | 의미 |
+|---|---|
+| read_ordinal | 마지막으로 읽은 원본 record; -1은 아직 읽지 않음 |
+| commit_ordinal | 안정적 결과·issue와 함께 commit한 처리 frontier; 단순 최대 row ordinal과 다름 |
+| replay_from_ordinal / replay_anchor | 미완료 상태를 재구성하는 가장 이른 입력과 그 앞의 유효 format anchor |
+| source/processing/analysis/timeline identity | 원본, parser/profile/policy, DB/assignment/route/query/engine/timeout/결과 schema, mapping/순서 설정 |
+| sink kind / job key | 어떤 결과 generation과 checkpoint가 함께 확정됐는지 |
+
+replay 시작은 열린 ISO-TP의 SF/FF, 미완료 UDS의 요청 시작, 필요한 signal/temporal context 중 가장 이른 입력을 포함한다. 미완료 분석 상태가 없으면 다음 unread record부터 재개할 수 있다. 유효 anchor가 더 앞에 있으면 그곳부터 읽고 원본 ordinal로 위치를 확인한다. 필요한 이전 위치를 확정할 수 없으면 job의 원래 분석 context 시작부터 다시 읽는다. 무관한 고정 lookback만으로 열린 요청을 복구했다고 간주하지 않는다.
+
+재독은 diagnostic state, responder별 timer/pending, 관련 issue를 재구성한다. 이미 commit한 결과는 안정적 transaction/response/sample/issue key로 중복 제거한다. timestamp만으로 재독 결과를 버리지 않는다. 요청이 commit frontier 이전이고 최종 응답이 이후인 transaction도 새 결과로 완성해야 한다.
+
+예: 9.9s 요청을 읽고 10.0s에 중단했으며 10.1s 응답이 남아 있다. checkpoint는 9.9s 요청 이전 anchor로 재개해 pairing을 복원한다. FF 이후 CF 사이에 중단하거나 pending 이후 중단한 경우도 같다. 기존에 확정한 다른 transaction은 중복 생성하지 않는다.
+
+signal rows, UDS 결과/상태, issues/연결, complete coverage, checkpoint는 같은 SQLite transaction에서 확정한다. 읽기 진행만 먼저 영구 저장하지 않는다. coverage의 시간 종료는 필요한 lookahead와 열린 상태를 해소한 범위에서만 정한다. unordered 입력은 EOF 또는 검증된 watermark 전까지 완료 coverage를 확정하지 않는다.
+
+State snapshot 재개는 후속 선택 기능이다. ISO-TP buffer/sequence/FC 상태, UDS request context와 responder timer, gap/quality, query window/reorder 상태의 versioned snapshot·크기 상한·무결성·원본/설정 일치를 검증하고 safe replay와 동등성 테스트를 통과한 뒤 활성화한다. MVP의 `analysis_checkpoints`는 snapshot 복구 지원을 주장하지 않는다.
+
+재개는 sink별로 제공한다. SQLite는 transaction과 안정 key를 이용한다. BLF/MF4 temp의 interrupted recovery가 검증되지 않았으면 새 temp를 생성한다. file을 처음부터 다시 쓰는데 SQLite checkpoint의 이미 출력된 ordinal을 건너뛰지 않는다. 원본/DB/settings/mapping mismatch는 재개를 거부하고 새 job으로 시작한다. 전 sink의 exactly-once를 일반 보장으로 선언하지 않는다.
 
 ### 34.4 Writer 완료 단계
 
