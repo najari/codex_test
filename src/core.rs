@@ -205,6 +205,7 @@ pub enum NativeRecord {
 pub enum IssueKind {
     UnsupportedRecord,
     UnresolvedId,
+    ConflictingId,
     CorruptedRegion,
     CanError,
 }
@@ -263,6 +264,17 @@ impl Default for Limits {
 pub trait LogReader {
     fn metadata(&self) -> &Metadata;
     fn next_item(&mut self) -> Result<Option<ReadItem>>;
+    /// A replay position, including parser state. No frame payload is stored.
+    fn checkpoint(&mut self) -> Result<ReaderCheckpoint> {
+        bail!("this format does not support indexing")
+    }
+    fn restore(
+        &mut self,
+        _checkpoint: &ReaderCheckpoint,
+        _cancel: &crate::playback::Cancellation,
+    ) -> Result<()> {
+        bail!("this format does not support indexed seeking")
+    }
     fn configure(
         &mut self,
         preserve: bool,
@@ -274,6 +286,28 @@ pub trait LogReader {
         );
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "format", rename_all = "snake_case")]
+pub enum ReaderCheckpoint {
+    Asc {
+        offset: u64,
+        line: u64,
+        ordinal: u64,
+        radix: u32,
+        relative: bool,
+        time: i64,
+        triggers: u32,
+        metadata: Box<Metadata>,
+    },
+    Blf {
+        offset: u64,
+        container: u64,
+        ordinal: u64,
+        padding_seen: usize,
+        skip: u64,
+    },
 }
 pub trait LogWriter {
     fn write_frame(&mut self, frame: &Frame) -> Result<()>;

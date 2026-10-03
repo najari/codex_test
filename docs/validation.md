@@ -2,6 +2,8 @@
 
 검증일: 2026-10-03. 파일 기반 recording/replay 0.1의 지원 프로파일을 검증했다.
 
+아래 집계·실행 파일 hash는 초기 50-test 빌드의 검증 기록이다. 이후 ASC 호환성 개선과 Vector/웹 샘플 검증은 [추가 검증 결과](corpus-validation.md)를 참고한다.
+
 ## 실행 환경과 빌드
 
 - OS: `Windows-11-10.0.26200-SP0`

@@ -2,11 +2,23 @@ use crate::core::*;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use std::{
     fs::File,
-    io::{BufRead, BufWriter, Write},
+    io::{BufRead, BufWriter, Seek, SeekFrom, Write},
 };
 
+#[derive(Debug)]
+struct ConflictingId(String);
+impl std::fmt::Display for ConflictingId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for ConflictingId {}
+
+pub trait AscInput: BufRead + Seek {}
+impl<T: BufRead + Seek> AscInput for T {}
+
 pub struct AscReader {
-    input: Box<dyn BufRead>,
+    input: Box<dyn AscInput>,
     metadata: Metadata,
     limits: Limits,
     line: Vec<u8>,
@@ -21,7 +33,7 @@ pub struct AscReader {
     mapped_current: bool,
 }
 impl AscReader {
-    pub fn new(input: Box<dyn BufRead>, source: &str, limits: Limits) -> Self {
+    pub fn new(input: Box<dyn AscInput>, source: &str, limits: Limits) -> Self {
         Self {
             input,
             metadata: Metadata {
@@ -99,7 +111,7 @@ impl AscReader {
             let data = self.bytes(&t[i + 4..i + 4 + len])?;
             let extra = &t[i + 4 + len..];
             ensure!(
-                extra.is_empty() || extra.len() == 8,
+                extra.is_empty() || matches!(extra.len(), 7 | 8),
                 "unexpected CAN FD trailing fields"
             );
             if !extra.is_empty() {
@@ -107,9 +119,11 @@ impl AscReader {
                     u64::from_str_radix(field, 16).context("invalid CAN FD ancillary field")?;
                 }
                 let expected = 0x1000 | if brs { 0x2000 } else { 0 } | if esi { 0x4000 } else { 0 };
-                if extra.iter().enumerate().any(|(j, s)| {
-                    u64::from_str_radix(s, 16).unwrap() != if j == 2 { expected } else { 0 }
-                }) {
+                if extra.len() == 7
+                    || extra.iter().enumerate().any(|(j, s)| {
+                        u64::from_str_radix(s, 16).unwrap() != if j == 2 { expected } else { 0 }
+                    })
+                {
                     self.note_annotations();
                 }
             }
@@ -120,12 +134,14 @@ impl AscReader {
             ensure!(t.len() >= 6, "truncated Classic CAN row");
             let channel = t[1].parse()?;
             // CANoe symbolic exports use decimal ID= trailers independently of base.
-            let trailer_id = t
+            let trailer_ids = t
                 .windows(3)
-                .find(|w| w[0] == "ID" && w[1] == "=")
-                .map(|w| w[2]);
-            let (id, extended) = if let Some(raw) = trailer_id {
-                parse_id(raw, 10)?
+                .filter(|w| w[0] == "ID" && w[1] == "=")
+                .map(|w| parse_id(w[2], 10))
+                .collect::<Result<Vec<_>>>()?;
+            let leading_id = parse_id(t[2], self.radix).ok();
+            let (id, extended) = if let Some(&raw) = trailer_ids.first() {
+                raw
             } else {
                 self.resolve_id(t[2], channel)?
             };
@@ -154,9 +170,20 @@ impl AscReader {
             if !extra.is_empty() {
                 self.note_annotations();
             }
-            Frame::new(
+            let frame = Frame::new(
                 timestamp, channel, id, extended, direction, remote, false, dlc, data, false, false,
-            )
+            )?;
+            // Validate the entire row before retaining an ambiguous record verbatim.
+            if !trailer_ids.is_empty()
+                && (leading_id.is_some_and(|leading| leading != (id, extended))
+                    || trailer_ids.iter().any(|&trailer| trailer != (id, extended)))
+            {
+                return Err(ConflictingId(format!(
+                    "conflicting ASC CAN IDs: leading {} (base {}), decimal trailers {:?}; no CAN frame selected",
+                    t[2], self.radix, trailer_ids
+                )).into());
+            }
+            Ok(frame)
         }
     }
     fn bytes(&self, t: &[&str]) -> Result<Vec<u8>> {
@@ -186,6 +213,53 @@ fn flag(t: &str) -> Result<bool> {
 }
 
 impl LogReader for AscReader {
+    fn checkpoint(&mut self) -> Result<ReaderCheckpoint> {
+        Ok(ReaderCheckpoint::Asc {
+            offset: self.input.stream_position()?,
+            line: self.line_no,
+            ordinal: self.ordinal,
+            radix: self.radix,
+            relative: self.relative,
+            time: self.time,
+            triggers: self.triggers,
+            metadata: Box::new(self.metadata.clone()),
+        })
+    }
+    fn restore(
+        &mut self,
+        checkpoint: &ReaderCheckpoint,
+        cancel: &crate::playback::Cancellation,
+    ) -> Result<()> {
+        cancel.check()?;
+        let ReaderCheckpoint::Asc {
+            offset,
+            line,
+            ordinal,
+            radix,
+            relative,
+            time,
+            triggers,
+            metadata,
+        } = checkpoint
+        else {
+            bail!("ASC checkpoint required")
+        };
+        ensure!(
+            matches!(radix, 10 | 16) && *time >= 0 && *triggers <= 1,
+            "invalid ASC checkpoint state"
+        );
+        self.input.seek(SeekFrom::Start(*offset))?;
+        self.line_no = *line;
+        self.ordinal = *ordinal;
+        self.radix = *radix;
+        self.relative = *relative;
+        self.time = *time;
+        self.triggers = *triggers;
+        let source = self.metadata.source.clone();
+        self.metadata = *metadata.clone();
+        self.metadata.source = source;
+        Ok(())
+    }
     fn configure(
         &mut self,
         preserve: bool,
@@ -284,7 +358,11 @@ impl LogReader for AscReader {
             if text.ends_with("internal events logged") {
                 continue;
             }
-            if text.starts_with("Begin Triggerblock") {
+            let header_tokens: Vec<_> = text.split_whitespace().collect();
+            let trigger = header_tokens
+                .get(1)
+                .is_some_and(|t| t.eq_ignore_ascii_case("Triggerblock"));
+            if trigger && header_tokens[0].eq_ignore_ascii_case("Begin") {
                 self.triggers += 1;
                 ensure!(self.triggers==1,"multiple ASC trigger blocks require separate clock handling; this profile does not merge them");
                 self.time = 0;
@@ -298,10 +376,10 @@ impl LogReader for AscReader {
                 }
                 continue;
             }
-            if text == "End TriggerBlock" || text == "End Triggerblock" {
+            if trigger && header_tokens.len() == 2 && header_tokens[0].eq_ignore_ascii_case("End") {
                 continue;
             }
-            let t: Vec<_> = text.split_whitespace().collect();
+            let t = header_tokens;
             let timestamp = seconds_ns(t[0]);
             if timestamp.is_err() {
                 ensure!(
@@ -395,7 +473,11 @@ impl LogReader for AscReader {
                         })
                     }
                     Err(e) => self.issue(
-                        IssueKind::CorruptedRegion,
+                        if e.downcast_ref::<ConflictingId>().is_some() {
+                            IssueKind::ConflictingId
+                        } else {
+                            IssueKind::CorruptedRegion
+                        },
                         e.to_string(),
                         Some(timestamp),
                         channel,

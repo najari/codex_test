@@ -36,6 +36,7 @@ pub struct BlfReader {
     ordinal: u64,
     padding_seen: usize,
     preserve: bool,
+    safe_anchor: (u64, u64, u64, usize),
 }
 impl BlfReader {
     pub fn new(mut input: BufReader<File>, source: &str, limits: Limits) -> Result<Self> {
@@ -84,9 +85,20 @@ impl BlfReader {
             ordinal: 0,
             padding_seen: 0,
             preserve: false,
+            safe_anchor: (size as u64, 0, 0, 0),
         })
     }
     fn container(&mut self) -> Result<bool> {
+        // Only an empty carry is a safe raw-file anchor. A spanning object is
+        // replayed from the previous safe container, never from its middle.
+        if self.buffer.len() == self.pos {
+            self.safe_anchor = (
+                self.input.stream_position()?,
+                self.container,
+                self.ordinal,
+                self.padding_seen,
+            );
+        }
         let mut head = [0; 16];
         if self.input.read(&mut head[..1])? == 0 {
             self.eof = true;
@@ -363,6 +375,47 @@ impl BlfReader {
     }
 }
 impl LogReader for BlfReader {
+    fn checkpoint(&mut self) -> Result<ReaderCheckpoint> {
+        let (offset, container, ordinal, padding_seen) = self.safe_anchor;
+        Ok(ReaderCheckpoint::Blf {
+            offset,
+            container,
+            ordinal,
+            padding_seen,
+            skip: self.ordinal - ordinal,
+        })
+    }
+    fn restore(
+        &mut self,
+        checkpoint: &ReaderCheckpoint,
+        cancel: &crate::playback::Cancellation,
+    ) -> Result<()> {
+        cancel.check()?;
+        let ReaderCheckpoint::Blf {
+            offset,
+            container,
+            ordinal,
+            padding_seen,
+            skip,
+        } = checkpoint
+        else {
+            bail!("BLF checkpoint required")
+        };
+        ensure!(*padding_seen <= 3, "invalid BLF checkpoint padding");
+        self.input.seek(SeekFrom::Start(*offset))?;
+        self.buffer.clear();
+        self.pos = 0;
+        self.eof = false;
+        self.container = *container;
+        self.ordinal = *ordinal;
+        self.padding_seen = *padding_seen;
+        self.safe_anchor = (*offset, *container, *ordinal, *padding_seen);
+        for _ in 0..*skip {
+            cancel.check()?;
+            ensure!(self.next_item()?.is_some(), "BLF checkpoint beyond EOF");
+        }
+        Ok(())
+    }
     fn configure(
         &mut self,
         preserve: bool,

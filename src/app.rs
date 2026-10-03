@@ -166,13 +166,13 @@ impl Filter {
                 .is_none_or(|kind| f.extended() == (kind == IdKind::Extended))
             && self.args.direction.is_none_or(|d| f.direction() == d)
     }
-    fn time_channel(&self, timestamp: Option<i64>, channel: Option<u16>) -> bool {
+    pub(crate) fn time_channel(&self, timestamp: Option<i64>, channel: Option<u16>) -> bool {
         // Unknown coordinates cannot prove that an issue is outside selection.
         timestamp.is_none_or(|t| {
             t >= self.args.start.unwrap_or(0) && t < self.args.end.unwrap_or(i64::MAX)
         }) && channel.is_none_or(|c| self.args.channel.is_empty() || self.args.channel.contains(&c))
     }
-    fn limits(&self) -> Limits {
+    pub(crate) fn limits(&self) -> Limits {
         Limits {
             max_line: self.args.max_line_bytes,
             max_object: self.args.max_object_bytes,

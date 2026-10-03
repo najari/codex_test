@@ -20,6 +20,28 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Manage independent logs, stored DBC bindings and signal caches.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
+    /// Build or inspect sparse ASC/BLF search indexes.
+    Index {
+        #[command(subcommand)]
+        command: IndexCommand,
+    },
+    /// Decode signals using explicit channel-to-DBC assignments.
+    Decode {
+        #[command(flatten)]
+        args: InputArgs,
+        /// Repeat for multiple channels/databases: --dbc 1=network.dbc
+        #[arg(long, required = true)]
+        dbc: Vec<String>,
+        #[arg(long)]
+        index: Option<PathBuf>,
+        #[command(flatten)]
+        output: canlog::analysis::StreamOutput,
+    },
     Info {
         #[command(flatten)]
         args: InputArgs,
@@ -98,6 +120,276 @@ enum Command {
         control_stdin: bool,
     },
 }
+
+#[derive(Subcommand)]
+enum WorkspaceCommand {
+    Create {
+        workspace: PathBuf,
+        #[arg(long)]
+        name: Option<String>,
+    },
+    Info {
+        workspace: PathBuf,
+    },
+    Add {
+        workspace: PathBuf,
+        input: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        id_map: Option<PathBuf>,
+    },
+    /// Replace all stored DBC bindings for one registered log.
+    Bind {
+        workspace: PathBuf,
+        log: String,
+        #[arg(long, required = true)]
+        dbc: Vec<String>,
+    },
+    Index {
+        workspace: PathBuf,
+        #[command(flatten)]
+        args: InputArgs,
+        #[arg(long, default_value_t = 1024)]
+        stride: u64,
+    },
+    Query {
+        workspace: PathBuf,
+        #[command(flatten)]
+        args: InputArgs,
+        #[command(flatten)]
+        output: canlog::analysis::StreamOutput,
+    },
+    Decode {
+        workspace: PathBuf,
+        #[command(flatten)]
+        args: InputArgs,
+        #[arg(long)]
+        dbc: Vec<String>,
+        #[arg(long)]
+        no_cache: bool,
+        #[command(flatten)]
+        output: canlog::analysis::StreamOutput,
+    },
+    Cache {
+        workspace: PathBuf,
+        #[command(subcommand)]
+        command: CacheCommand,
+    },
+}
+#[derive(Subcommand)]
+enum CacheCommand {
+    Info,
+    Clear,
+    Limit { mib: u64 },
+}
+
+fn workspace_command(command: WorkspaceCommand, cancel: &Cancellation) -> anyhow::Result<i32> {
+    use canlog::workspace as ws;
+    let value = match command {
+        WorkspaceCommand::Create { workspace, name } => {
+            serde_json::to_value(ws::create(&workspace, name.as_deref(), cancel)?)?
+        }
+        WorkspaceCommand::Info { workspace } => {
+            serde_json::to_value(ws::Workspace::load(&workspace)?.manifest)?
+        }
+        WorkspaceCommand::Add {
+            workspace,
+            input,
+            name,
+            id_map,
+        } => serde_json::to_value(ws::add(
+            &workspace,
+            &input,
+            &name,
+            id_map.as_deref(),
+            cancel,
+        )?)?,
+        WorkspaceCommand::Bind {
+            workspace,
+            log,
+            dbc,
+        } => serde_json::to_value(ws::bind(&workspace, &log, &dbc, cancel)?)?,
+        WorkspaceCommand::Index {
+            workspace,
+            args,
+            stride,
+        } => {
+            if let Some(path) = &args.report {
+                let ws = ws::Workspace::load(&workspace)?;
+                ws.protect_output(path)?;
+                anyhow::ensure!(!path.exists(), "report exists");
+            }
+            let manifest = ws::build_index(&workspace, &args, stride, cancel)?;
+            if let Some(path) = &args.report {
+                canlog::output::write_report(path, &manifest, false)?;
+            }
+            serde_json::to_writer_pretty(std::io::stdout(), &manifest)?;
+            println!();
+            return Ok(if manifest.issues > 0 { 3 } else { 0 });
+        }
+        WorkspaceCommand::Query {
+            workspace,
+            args,
+            output,
+        } => {
+            let (report, result) = ws::stream(&workspace, &args, None, &output, true, cancel);
+            return finish_analysis(report, result);
+        }
+        WorkspaceCommand::Decode {
+            workspace,
+            args,
+            dbc,
+            no_cache,
+            output,
+        } => {
+            let (report, result) =
+                ws::stream(&workspace, &args, Some(&dbc), &output, no_cache, cancel);
+            return finish_analysis(report, result);
+        }
+        WorkspaceCommand::Cache { workspace, command } => match command {
+            CacheCommand::Info => ws::cache_info(&workspace)?,
+            CacheCommand::Clear => {
+                cancel.check()?;
+                ws::clear_cache(&workspace)?;
+                ws::cache_info(&workspace)?
+            }
+            CacheCommand::Limit { mib } => {
+                serde_json::to_value(ws::set_quota(&workspace, mib, cancel)?)?
+            }
+        },
+    };
+    serde_json::to_writer_pretty(std::io::stdout(), &value)?;
+    println!();
+    Ok(0)
+}
+
+#[derive(Subcommand)]
+enum IndexCommand {
+    Build {
+        #[command(flatten)]
+        args: InputArgs,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        overwrite: bool,
+        #[arg(long, default_value_t = 1024)]
+        stride: u64,
+    },
+    Info {
+        index: PathBuf,
+    },
+    Query {
+        #[command(flatten)]
+        args: InputArgs,
+        #[arg(long)]
+        index: PathBuf,
+        #[command(flatten)]
+        output: canlog::analysis::StreamOutput,
+    },
+}
+
+fn extended(command: Command) -> i32 {
+    let cancel = Cancellation::default();
+    let handler = cancel.clone();
+    let result = (|| -> anyhow::Result<i32> {
+        ctrlc::set_handler(move || handler.cancel())?;
+        match command {
+            Command::Workspace { command } => workspace_command(command, &cancel),
+            Command::Index {
+                command:
+                    IndexCommand::Build {
+                        args,
+                        output,
+                        overwrite,
+                        stride,
+                    },
+            } => {
+                if let Some(path) = &args.report {
+                    canlog::index::protect(path, std::path::Path::new(&args.input))?;
+                    canlog::output::ensure_distinct_paths(path, &output)?;
+                    anyhow::ensure!(
+                        !path.exists() && path != &output,
+                        "report path exists or conflicts with output"
+                    );
+                }
+                let manifest = canlog::index::build(&args, &output, overwrite, stride, &cancel)?;
+                serde_json::to_writer_pretty(std::io::stdout(), &manifest)?;
+                println!();
+                if let Some(path) = &args.report {
+                    canlog::output::write_report(path, &manifest, false)?;
+                }
+                eprintln!(
+                    "index published: frames={}, issues={}, chunks={}",
+                    manifest.frames, manifest.issues, manifest.chunks
+                );
+                Ok(if manifest.issues > 0 { 3 } else { 0 })
+            }
+            Command::Index {
+                command: IndexCommand::Info { index },
+            } => {
+                serde_json::to_writer_pretty(std::io::stdout(), &canlog::index::info(&index)?)?;
+                println!();
+                Ok(0)
+            }
+            Command::Index {
+                command:
+                    IndexCommand::Query {
+                        args,
+                        index,
+                        output,
+                    },
+            } => analysis_stream(args, Some(index), None, output, &cancel),
+            Command::Decode {
+                args,
+                dbc,
+                index,
+                output,
+            } => analysis_stream(args, index, Some(dbc), output, &cancel),
+            _ => unreachable!("only analysis commands reach this dispatcher"),
+        }
+    })();
+    match result {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("{error:#}");
+            if error.is::<Cancelled>() {
+                130
+            } else {
+                1
+            }
+        }
+    }
+}
+
+fn analysis_stream(
+    args: InputArgs,
+    index: Option<PathBuf>,
+    dbc: Option<Vec<String>>,
+    output: canlog::analysis::StreamOutput,
+    cancel: &Cancellation,
+) -> anyhow::Result<i32> {
+    let (report, result) =
+        canlog::analysis::stream(&args, index.as_deref(), dbc.as_deref(), &output, cancel);
+    finish_analysis(report, result)
+}
+
+fn finish_analysis(
+    report: canlog::analysis::AnalysisReport,
+    result: anyhow::Result<()>,
+) -> anyhow::Result<i32> {
+    eprintln!("{}: examined={}, selected={}, issues={}, chunks={:?}, decode={:?}, selection_complete={}, published={}",
+        report.status, report.frames_examined, report.frames_selected, report.issues_selected, report.chunks_read, report.decode_counts,
+        report.selection_complete, report.published);
+    if let Some(cache) = &report.cache {
+        eprintln!(
+            "cache: hits={}, misses={}, written={}, evicted={}, quota_skips={}",
+            cache.hits, cache.misses, cache.rows_written, cache.rows_evicted, cache.quota_skips
+        );
+    }
+    result?;
+    Ok(if report.status == "partial" { 3 } else { 0 })
+}
 // Record keeps the same input/filter flags, with --input instead of a positional source.
 #[derive(clap::Args)]
 struct RecordArgs {
@@ -160,7 +452,16 @@ impl RecordArgs {
 
 fn main() {
     let cli = Cli::parse();
+    if matches!(
+        &cli.command,
+        Command::Index { .. } | Command::Decode { .. } | Command::Workspace { .. }
+    ) {
+        std::process::exit(extended(cli.command));
+    }
     let (args, operation, control) = match cli.command {
+        Command::Index { .. } | Command::Decode { .. } | Command::Workspace { .. } => {
+            unreachable!("handled by analysis dispatcher")
+        }
         Command::Info { args, scan } => (args, Operation::Info { scan }, false),
         Command::Stats { args } => (args, Operation::Stats, false),
         Command::View { args, unlimited } => (args, Operation::View { unlimited }, false),

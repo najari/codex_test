@@ -1,6 +1,11 @@
+pub mod analysis;
 pub mod app;
+pub mod cache;
 pub mod core;
+pub mod dbc;
 pub mod formats;
 pub mod id_map;
+pub mod index;
 pub mod output;
 pub mod playback;
+pub mod workspace;

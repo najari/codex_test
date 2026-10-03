@@ -60,11 +60,13 @@ def native_fingerprint(source):
                 parts = row.split(); radix = 10 if parts[1] == "dec" else 16
                 relative = parts[3] == "relative"
                 continue
-            if row.startswith("Begin Triggerblock"):
+            tokens = row.split()
+            is_trigger = len(tokens) >= 2 and tokens[1].casefold() == "triggerblock"
+            if is_trigger and tokens[0].casefold() == "begin":
                 triggers += 1; assert triggers == 1
                 timestamp = 0
                 continue
-            if row in ("End TriggerBlock", "End Triggerblock"):
+            if is_trigger and len(tokens) == 2 and tokens[0].casefold() == "end":
                 continue
             seconds, body = row.split(maxsplit=1)
             ns = Decimal(seconds) * 1_000_000_000

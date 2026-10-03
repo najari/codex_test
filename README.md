@@ -30,6 +30,14 @@ Windows에는 Rust MSVC toolchain 1.88 이상, Visual Studio C++ Build Tools, Wi
 | `export INPUT -o OUTPUT --format jsonl` | 버전 있는 frame stream 출력; CSV도 지원 |
 | `record --input INPUT -o OUTPUT` | 파일 또는 JSONL stdin을 새 로그로 기록 |
 | `replay INPUT` | 기본 1배속·1회, JSONL stdout으로 재생 |
+| `index build INPUT -o INDEX` / `index info INDEX` | 원본 payload를 복제하지 않는 SQLite 검색 인덱스 작성/조회 |
+| `index query INPUT --index INDEX` | 원본을 확인하고 선택 chunk부터 읽는 JSONL 검색 |
+| `decode INPUT --dbc CHANNEL=PATH` | 실제 Rust DBC 엔진을 통한 typed 신호 해석; `--index` 지원 |
+| `workspace create/add/bind/index/query/decode` | 여러 로그 등록, DBC 연결 저장, managed index와 영속 신호 캐시 |
+| `workspace cache ROOT info/clear/limit` | 캐시 조회·정리·payload 용량 제한 |
+
+인덱스 생성·시간 검색·채널별 DBC 지정 예제와 정확한 지원 범위는 [SQLite·DBC 사용법](docs/index-dbc.md)을 따른다.
+다중 파일 등록과 캐시를 사용하는 실제 샘플 명령은 [workspace 사용법](docs/workspace.md)에 있다.
 
 `INPUT=-`는 `--input-format jsonl`과 함께 사용한다. ASC·BLF·JSONL은 입력/출력, CSV는 출력만 지원한다. 인식되지 않는 header는 명시적 input format이 필요하다. 형식 지원 범위는 [지원 문서](docs/support.md)에 정리했다.
 
@@ -69,7 +77,9 @@ ASC는 timestamp를 absolute ns 표현으로 바꾸고 나머지 행과 원본 h
 .\dist\canlog.exe record --input .\can_example\asf\can2.asc -o .\can2-mapped.blf --id-map .\id-map.json --unsupported skip --allow-loss unsupported-record --allow-loss field:format-metadata --report .\mapped-report.json
 ```
 
-위 JSON의 ID는 사용법을 설명하는 값이다. 실제 `Stress2` ID는 DBC 등에서 확인한 값으로 작성한다. 숫자 ID와 `ID = ...` trailer를 우선하며 매핑으로 덮어쓰지 않는다. report는 사용한 매핑 내용을 포함하고 `mapped_frames`에 적용 수를 남긴다. 파일로 정규화하면 원본 이름은 `field:format-metadata` 손실로 보고한다.
+위 JSON의 ID는 사용법을 설명하는 값이다. 실제 `Stress2` ID는 DBC 등에서 확인한 값으로 작성한다. 숫자 ID와 `ID = ...` trailer를 매핑으로 덮어쓰지 않는다. 앞쪽 숫자 ID와 decimal trailer가 다르거나 ID 종류가 다르면 `ConflictingId`로 보고하고 정상 프레임 ID를 추정하지 않는다. 이름만 있는 행은 decimal trailer로 해석한다. report는 사용한 매핑 내용을 포함하고 `mapped_frames`에 적용 수를 남긴다. 파일로 정규화하면 원본 이름은 `field:format-metadata` 손실로 보고한다.
+
+ASC는 `Begin Triggerblock`/`Begin TriggerBlock`의 대소문자 및 공백 변형과 CAN FD의 7개/8개 후행 부가 필드를 읽는다. 여러 trigger block의 clock 병합과 잘못된 DLC/payload의 자동 보정은 지원하지 않는다. ID 충돌 행은 `--unsupported skip`으로 제외하거나, 같은 ASC 파일 출력의 `--preserve-records`로 원문 보존할 수 있다.
 
 ## 미지원 기록과 출력 보호
 
@@ -84,7 +94,7 @@ ASC는 timestamp를 absolute ns 표현으로 바꾸고 나머지 행과 원본 h
 
 | Category | 의미 |
 |---|---|
-| `unsupported-record` | 미지원 event/object, unresolved ID, CAN error의 출력 제외 |
+| `unsupported-record` | 미지원 event/object, unresolved/conflicting ID, CAN error의 출력 제외 |
 | `corrupted-region` | 복구 가능한 손상 행 또는 frame 제외 |
 | `field:format-metadata` | frame duration, bit count, symbolic name 등의 부가 필드 제외 |
 | `field:source-metadata` | JSONL/CSV의 로그 date, 재작성의 입력 provenance, 미해석/서브밀리초 date origin 제외 |
@@ -119,4 +129,4 @@ python -m venv .\target\verify-env
 
 독립 비교용 Python은 CLI 런타임 의존성이 아니다. 스크립트는 로컬 샘플을 수정하지 않고 `artifacts/`에 checksum manifest·CAN 왕복·외부 비교·배속/제어·메모리 측정 결과를 생성한다. Windows benchmark는 peak working set을 사용한다. 로컬 샘플은 재배포 권한이 확인되지 않았으므로 Git/CI에서 제외하며, CI는 프로젝트 생성 fixture와 단위·통합 테스트를 실행한다.
 
-[검증 결과](docs/validation.md), [원래 구현 계획](docs/implementation-plan.md), [장기 설계](docs/canlog-rs-design.md)를 참고한다.
+[기존 검증 결과](docs/validation.md), [추가 샘플·ASC 호환성 검증](docs/corpus-validation.md), [SQLite·DBC 검증](docs/index-dbc-validation.md), [workspace 검증](docs/workspace-validation.md), [원래 구현 계획](docs/implementation-plan.md), [장기 설계](docs/canlog-rs-design.md)를 참고한다.

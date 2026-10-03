@@ -1,4 +1,4 @@
-param([switch]$Test, [switch]$Release)
+param([switch]$Test, [switch]$Release, [switch]$TestEngine, [string]$EngineSamples)
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path $PSScriptRoot -Parent
 $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
@@ -19,6 +19,40 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
 }
 Push-Location $taskRoot
 try {
+    if ($TestEngine) {
+        $taskMetadata = & cargo metadata --locked --format-version 1 | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw 'Dependency metadata failed' }
+        $taskEngine = $taskMetadata.packages | Where-Object name -eq 'candb-engine'
+        if (-not $taskEngine) { throw 'Pinned candb-engine dependency not found' }
+        $taskPinnedRoot = Split-Path (Split-Path $taskEngine.manifest_path -Parent) -Parent
+        $taskEngineManifest = $taskEngine.manifest_path
+        $taskEngineTarget = Join-Path $taskRoot 'target\dbc-engine'
+        if ($EngineSamples) {
+            # Test a copy of the pinned engine, with locally supplied corpus data.
+            # Never edit the upstream checkout or original sample files.
+            $taskSampleRoot = (Resolve-Path -LiteralPath $EngineSamples).Path
+            $taskTestRoot = Join-Path $taskRoot 'target\dbc-engine-source'
+            New-Item -ItemType Directory -Path $taskTestRoot -Force | Out-Null
+            foreach ($taskName in @('Cargo.toml', 'Cargo.lock', 'engine', 'samples')) {
+                Copy-Item -LiteralPath (Join-Path $taskPinnedRoot $taskName) -Destination $taskTestRoot -Recurse -Force
+            }
+            foreach ($taskFolder in @('dbc_files', 'cantools\dbc', 'model3')) {
+                $taskDestination = Join-Path $taskTestRoot "samples\$taskFolder"
+                New-Item -ItemType Directory -Path $taskDestination -Force | Out-Null
+                Get-ChildItem -LiteralPath (Join-Path $taskSampleRoot $taskFolder) -File -Filter '*.dbc' | ForEach-Object {
+                    Copy-Item -LiteralPath $_.FullName -Destination $taskDestination -Force
+                }
+            }
+            $taskEngineManifest = Join-Path $taskTestRoot 'engine\Cargo.toml'
+            # Corpus paths are embedded by env!(CARGO_MANIFEST_DIR); use a
+            # separate target from tests compiled directly in Cargo's checkout.
+            $taskEngineTarget = Join-Path $taskRoot 'target\dbc-engine-with-corpus'
+        } elseif (-not (Test-Path -LiteralPath (Join-Path $taskPinnedRoot 'samples\dbc_files'))) {
+            throw 'Upstream corpus is not shipped in Git. Use -EngineSamples <local engine samples directory> for -TestEngine.'
+        }
+        & cargo test --locked --manifest-path $taskEngineManifest --target-dir $taskEngineTarget
+        if ($LASTEXITCODE -ne 0) { throw 'Pinned DBC engine tests failed' }
+    }
     if ($Test) {
         & cargo test --locked
         if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }

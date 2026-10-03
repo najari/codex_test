@@ -5,8 +5,8 @@
 | 항목 | Reader | Writer |
 |---|---|---|
 | ASC Classic | hex/dec, Standard/Extended, Rx/Tx, data/Remote, raw DLC 0–15 | 정수 ns offset의 hex/absolute canonical ASC |
-| ASC FD | CANFD 행, 선택적 이름, BRS/ESI, DLC→길이 검증, DLC 0–15 | CANFD canonical 행, 0–64 bytes |
-| ASC 시간 | absolute offset 또는 relative delta 누적; 단일 trigger block | 원본 offset 유지, timezone 추정 없음 |
+| ASC FD | CANFD 행, 선택적 이름, BRS/ESI, DLC→길이 검증, DLC 0–15, 후행 부가 필드 7/8개 | CANFD canonical 행, 0–64 bytes |
+| ASC 시간 | absolute offset 또는 relative delta 누적; 단일 trigger block, Begin/End Triggerblock의 대소문자·공백 변형 | 원본 offset 유지, timezone 추정 없음 |
 | ASC 이름 ID | decimal `ID = ...` trailer가 있는 CANoe symbolic export | 숫자 ID 출력, 이름/annotations 손실 보고 |
 | ASC 명시 매핑 | `--id-map` JSON의 channel/name/ID/extended 지정; Classic/FD | 정규화 CAN frame; 원본 이름 손실 보고 |
 | ASC encoding | UTF-8/BOM, UTF-8 실패 시 Windows-1252 decode를 notes로 공개 | UTF-8 |
@@ -20,7 +20,9 @@
 
 Standard ID는 0–0x7FF, Extended는 0–0x1FFFFFFF다. Classic의 DLC 9–15는 payload 8 bytes와 구분하여 원시 코드를 유지한다. Remote에는 payload가 없고 FD Remote는 거부한다. DLC와 선언/실제 payload 길이가 다르면 padding이나 truncation으로 정상화하지 않는다.
 
-ASC ancillary 필드는 canonical FD의 8개 timing/flags 필드와 Classic의 Length/BitCount/ID triplet을 인식한다. DLC 뒤에 예상하지 못한 bytes가 있으면 손상으로 보고한다. 일부 BLF FD64 producer가 잘린 payload를 기록하는 경우에도 누락 byte를 0으로 채우지 않는다.
+ASC ancillary 필드는 FD의 7개/8개 timing/flags 필드와 Classic의 Length/BitCount/ID triplet을 인식한다. FD 부가 필드는 유효한 hex 정수여야 하며 7개 변형의 의미를 CAN 필드로 추정하지 않고 annotations로 보고한다. 정규화 출력에서 제거하면 `field:format-metadata` 손실을 보고하고, 같은 ASC 보존 출력에서는 원문을 유지한다. 선언된 payload 밖의 다른 개수/잘못된 필드는 손상으로 보고한다. 일부 BLF FD64 producer가 잘린 payload를 기록하는 경우에도 누락 byte를 0으로 채우지 않는다.
+
+Classic ASC 앞쪽 numeric ID와 decimal `ID =` trailer의 ID 또는 Standard/Extended 종류가 충돌하면 `ConflictingId` issue다. 여러 ID trailer가 서로 다를 때도 동일하다. 기본 처리에서는 중단하고 `--unsupported skip`으로 제외할 수 있으며, 파일 재작성에서 제외하려면 `unsupported-record` 손실 허용도 필요하다. `--preserve-records`는 전체 행의 payload/기본 문법을 먼저 검사한 뒤 충돌 행을 해석되지 않은 원문으로 보존한다. 정상 CAN frame으로 어느 쪽 ID도 선택하지 않는다. 이름만 있는 행의 decimal trailer 해석과 `--id-map` 동작은 유지한다.
 
 BLF의 원본 부가 timing/flags/object 전용 필드는 canonical CAN frame 모델의 보존 범위 밖이다. 기본 정규화 경로에서는 알려진 annotations를 손실 category로 보고한다. 보존 모드는 정상 CAN을 포함한 inner object 전체를 유지하지만 압축 container/file header는 재생성한다. ASC 보존은 기존 base와 timestamp 뒤 행을 유지하고 시간을 absolute offset으로 쓴다. byte-for-byte 파일 복원, arbitrary header/주석/trigger 구조의 완전 보존을 지원한다고 주장하지 않는다.
 
@@ -47,6 +49,8 @@ ID 매핑은 schema version 1 JSON의 channel/name 쌍이 정확히 일치할 �
 
 ## 다음 확장
 
-장비 transport adapter, error/event의 typed 분석과 교차 포맷 Writer, SQLite index, DBC/CDD·진단, MF4, multi-file clock/merge, GUI는 후속 확장이다. 보존 기록의 JSONL/CSV export, 반복 time shift, arbitrary ASC dialect도 별도 확장이 필요하다.
+단일 ASC/BLF의 SQLite sparse index와 실제 Rust DBC 해석은 구현되어 있다. 명령과 범위는 [index-dbc.md](index-dbc.md)를 따른다.
+multi-source workspace/assignment 저장과 persistent signal cache도 구현되어 있다. [workspace.md](workspace.md)에 저장 규칙·quota·정합성과 명령을 정리했다.
+source 이동 재연결, 장비 transport adapter, error/event의 typed 분석과 교차 포맷 Writer, CDD·진단, MF4, multi-file clock/merge, GUI는 후속 확장이다. 보존 기록의 JSONL/CSV export, 반복 time shift, arbitrary ASC dialect도 별도 확장이 필요하다.
 
 독립 비교 근거: [python-can 4.6.1 ASC 구현](https://python-can.readthedocs.io/en/4.6.1/_modules/can/io/asc.html), [BLF 구현](https://python-can.readthedocs.io/en/4.6.1/_modules/can/io/blf.html). python-can의 epoch float64 시간 양자화와 FD zero-length ASC를 remote로 표시하는 차이는 검증 report에 별도로 기록한다.

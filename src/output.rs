@@ -40,6 +40,9 @@ impl AtomicOutput {
     pub fn file(&self) -> Result<File> {
         Ok(self.temp.as_file().try_clone()?)
     }
+    pub fn temporary_path(&self) -> &Path {
+        self.temp.path()
+    }
     pub fn publish(self, sync: bool) -> Result<()> {
         if sync {
             self.temp
@@ -68,4 +71,32 @@ pub fn write_report(path: &Path, value: &impl serde::Serialize, overwrite: bool)
     writeln!(file)?;
     drop(file);
     output.publish(true)
+}
+
+pub fn ensure_distinct_paths(a: &Path, b: &Path) -> Result<()> {
+    if a.exists() && b.exists() {
+        ensure!(
+            !same_file::is_same_file(a, b)?,
+            "output and report paths conflict"
+        );
+    }
+    fn normalized(path: &Path) -> Result<PathBuf> {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        Ok(parent
+            .canonicalize()?
+            .join(path.file_name().context("output filename required")?))
+    }
+    let a = normalized(a)?;
+    let b = normalized(b)?;
+    #[cfg(windows)]
+    let equal = a
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&b.to_string_lossy());
+    #[cfg(not(windows))]
+    let equal = a == b;
+    ensure!(!equal, "output and report paths conflict");
+    Ok(())
 }
