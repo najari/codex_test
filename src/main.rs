@@ -20,6 +20,19 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Analyze the explicit Vector KWP2000-over-ISO-TP profile with optional CDD.
+    Kwp {
+        #[command(flatten)]
+        args: InputArgs,
+        #[arg(long, value_name = "JSON")]
+        routes: PathBuf,
+        #[arg(long, value_name = "JSON")]
+        policy: PathBuf,
+        #[command(flatten)]
+        definitions: canlog::diagnostics::Definitions,
+        #[command(flatten)]
+        output: canlog::diagnostics::IsotpOutput,
+    },
     /// Inspect CDD ECU/variant qualifiers and definitions using the optional pinned engine.
     CddInfo {
         input: PathBuf,
@@ -34,6 +47,8 @@ enum Command {
         routes: PathBuf,
         #[arg(long, value_name = "JSON")]
         policy: PathBuf,
+        #[command(flatten)]
+        definitions: canlog::diagnostics::Definitions,
         #[command(flatten)]
         output: canlog::diagnostics::IsotpOutput,
     },
@@ -411,11 +426,39 @@ fn extended(command: Command) -> i32 {
                 args,
                 routes,
                 policy,
+                definitions,
                 output,
             } => {
-                let (report, result) =
-                    canlog::diagnostics::analyze_uds(&args, &routes, &policy, &output, &cancel);
-                eprintln!("{}: examined={}, matched={}, rows={}, uds={:?}, scan_complete={}, published={}",report.status,report.frames_examined,report.frames_matched,report.output_rows,report.uds_counts,report.scan_complete,report.published);
+                let (report, result) = canlog::diagnostics::analyze_with_definitions(
+                    &args,
+                    &routes,
+                    &policy,
+                    canlog::uds::Protocol::Uds2013,
+                    &definitions,
+                    &output,
+                    &cancel,
+                );
+                eprintln!("{}: examined={}, matched={}, rows={}, dbc={:?}, uds={:?}, cdd={:?}, scan_complete={}, published={}",report.status,report.frames_examined,report.frames_matched,report.output_rows,report.dbc_counts,report.uds_counts,report.cdd_counts,report.scan_complete,report.published);
+                result?;
+                Ok(if report.status == "partial" { 3 } else { 0 })
+            }
+            Command::Kwp {
+                args,
+                routes,
+                policy,
+                definitions,
+                output,
+            } => {
+                let (report, result) = canlog::diagnostics::analyze_with_definitions(
+                    &args,
+                    &routes,
+                    &policy,
+                    canlog::uds::Protocol::Kwp2000Vector,
+                    &definitions,
+                    &output,
+                    &cancel,
+                );
+                eprintln!("{}: examined={}, matched={}, rows={}, dbc={:?}, kwp={:?}, cdd={:?}, scan_complete={}, published={}",report.status,report.frames_examined,report.frames_matched,report.output_rows,report.dbc_counts,report.kwp_counts,report.cdd_counts,report.scan_complete,report.published);
                 result?;
                 Ok(if report.status == "partial" { 3 } else { 0 })
             }
@@ -545,6 +588,7 @@ fn main() {
             | Command::Workspace { .. }
             | Command::Isotp { .. }
             | Command::Uds { .. }
+            | Command::Kwp { .. }
             | Command::CddInfo { .. }
     ) {
         std::process::exit(extended(cli.command));
@@ -555,6 +599,7 @@ fn main() {
         | Command::Workspace { .. }
         | Command::Isotp { .. }
         | Command::Uds { .. }
+        | Command::Kwp { .. }
         | Command::CddInfo { .. } => {
             unreachable!("handled by analysis dispatcher")
         }

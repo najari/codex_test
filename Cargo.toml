@@ -19,7 +19,7 @@ tempfile = "3"
 rusqlite = { version = "0.40", features = ["bundled"] }
 sha2 = "0.10"
 candb-engine = { git = "https://github.com/najari/candb-csharp-clone", rev = "c51f18848dc4e32afd96b1a6e5bc975da70c6828" }
-cdd-api = { git = "https://github.com/najari/cdd-rust-engine", rev = "70d800879b164c577ba8075de63a19b26c9b1f9b", optional = true }
+cdd-api = { git = "https://github.com/najari/cdd-rust-engine", rev = "9207dfc845d5d256eb479073824bad234b27f79b", optional = true }
 
 [features]
 default = []

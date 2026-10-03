@@ -1,4 +1,4 @@
-//! Passive physical UDS header matching. Manufacturer layouts belong to a CDD adapter.
+//! Bounded passive transaction matching with explicit UDS/KWP header profiles.
 use crate::{
     core::Location,
     isotp::{Config as TransportConfig, Direction, Event, ResponseStart},
@@ -8,10 +8,32 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
     Uds2013,
+    Kwp2000Vector,
+}
+impl Protocol {
+    pub fn cdd_label(self) -> &'static str {
+        match self {
+            Self::Uds2013 => "uds",
+            Self::Kwp2000Vector => "kwp2000",
+        }
+    }
+    fn is_uds(&self) -> bool {
+        *self == Self::Uds2013
+    }
+    fn kind(self, status: Status, issue: bool) -> &'static str {
+        match (self, status, issue) {
+            (Self::Uds2013, _, true) => "uds_issue",
+            (Self::Uds2013, Status::Pending, false) => "uds_pending",
+            (Self::Uds2013, _, false) => "uds_transaction",
+            (Self::Kwp2000Vector, _, true) => "kwp_issue",
+            (Self::Kwp2000Vector, Status::Pending, false) => "kwp_pending",
+            (Self::Kwp2000Vector, _, false) => "kwp_transaction",
+        }
+    }
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -52,10 +74,13 @@ pub struct Config {
 }
 impl Config {
     pub fn validate(&self, transport: &TransportConfig) -> Result<()> {
-        ensure!(self.schema_version == 1, "unsupported UDS policy schema");
+        ensure!(
+            self.schema_version == 1,
+            "unsupported diagnostic policy schema"
+        );
         ensure!(
             (1..=64).contains(&self.routes.len()),
-            "UDS policy requires 1..64 physical route bindings"
+            "diagnostic policy requires 1..64 physical route bindings"
         );
         ensure!(
             (1..=128).contains(&self.max_outstanding),
@@ -78,7 +103,7 @@ impl Config {
             ensure!(
                 names.insert(&policy.route)
                     && transport.routes.iter().any(|r| r.name == policy.route),
-                "UDS route bindings must be unique and refer to existing transport routes"
+                "diagnostic route bindings must be unique and refer to existing transport routes"
             );
             ensure!(
                 (1..=60_000_000_000).contains(&policy.p2_ns)
@@ -132,7 +157,7 @@ impl Payload {
         })
     }
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct RequestHeader {
     pub service_id: u8,
     pub subfunction: Option<u8>,
@@ -140,6 +165,14 @@ pub struct RequestHeader {
     pub routine_id: Option<u16>,
     pub block_sequence_counter: Option<u8>,
     pub suppress_positive_response: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic_mode: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_mode: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_identifier: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dtc_group: Option<u16>,
 }
 fn supported(sid: u8) -> bool {
     matches!(
@@ -162,6 +195,7 @@ fn request_header(bytes: &[u8]) -> std::result::Result<RequestHeader, &'static s
         routine_id: None,
         block_sequence_counter: None,
         suppress_positive_response: false,
+        ..Default::default()
     };
     if matches!(sid, 0x10 | 0x11 | 0x19 | 0x27 | 0x31 | 0x3e) {
         if bytes.len() < 2 {
@@ -238,9 +272,9 @@ fn request_header(bytes: &[u8]) -> std::result::Result<RequestHeader, &'static s
         Err("malformed_request_header")
     }
 }
-struct ResponseHeader {
-    sid: u8,
-    nrc: Option<u8>,
+pub(crate) struct ResponseHeader {
+    pub sid: u8,
+    pub nrc: Option<u8>,
 }
 fn response_header(bytes: &[u8]) -> std::result::Result<ResponseHeader, &'static str> {
     let first = *bytes.first().ok_or("malformed_empty_response")?;
@@ -389,6 +423,8 @@ impl Status {
 #[derive(Debug, Clone, Serialize)]
 pub struct Observation {
     pub kind: &'static str,
+    #[serde(skip_serializing_if = "Protocol::is_uds")]
+    pub protocol: Protocol,
     pub route: String,
     pub scope: &'static str,
     pub lifecycle: &'static str,
@@ -414,9 +450,16 @@ pub struct Observation {
     pub cdd: Option<crate::cdd::Decoded>,
 }
 impl Observation {
-    fn issue(route: &str, event: &Event, status: Status, reason: &str) -> Result<Self> {
+    fn issue(
+        protocol: Protocol,
+        route: &str,
+        event: &Event,
+        status: Status,
+        reason: &str,
+    ) -> Result<Self> {
         Ok(Self {
-            kind: "uds_issue",
+            kind: protocol.kind(status, true),
+            protocol,
             route: route.into(),
             scope: "physical",
             lifecycle: "closed",
@@ -452,6 +495,7 @@ impl Observation {
 }
 struct Transaction {
     key: String,
+    protocol: Protocol,
     binding: usize,
     header: RequestHeader,
     request: Payload,
@@ -475,11 +519,8 @@ impl Transaction {
             Status::Positive | Status::Negative | Status::Pending
         );
         Observation {
-            kind: if status == Status::Pending {
-                "uds_pending"
-            } else {
-                "uds_transaction"
-            },
+            kind: self.protocol.kind(status, false),
+            protocol: self.protocol,
             route: route.into(),
             scope: "physical",
             lifecycle: if status == Status::Pending {
@@ -590,7 +631,7 @@ impl Matcher {
         result.reverse();
         Ok(result)
     }
-    /// Completed payloads alone enter the UDS classifier; transport gaps close unresolved context.
+    /// Completed payloads alone enter the explicit protocol classifier; transport gaps close unresolved context.
     pub fn consume(&mut self, event: &Event) -> Result<Vec<Observation>> {
         let Some(route) = event.route.as_deref() else {
             return Ok(vec![]);
@@ -598,6 +639,7 @@ impl Matcher {
         let Some(binding) = self.config.routes.iter().position(|p| p.route == route) else {
             return Ok(vec![]);
         };
+        let protocol = self.config.routes[binding].protocol;
         if event.kind == "protocol_issue" || (event.kind == "payload" && event.status != "complete")
         {
             return self.interrupt_route(
@@ -617,7 +659,11 @@ impl Matcher {
             "completed transport declared length mismatch"
         );
         if event.direction == Some(Direction::Request) {
-            let header = match request_header(&data) {
+            let classified = match protocol {
+                Protocol::Uds2013 => request_header(&data),
+                Protocol::Kwp2000Vector => crate::kwp::request_header(&data),
+            };
+            let header = match classified {
                 Ok(header) => header,
                 Err(reason) => {
                     let mut result = self.interrupt_route(
@@ -627,6 +673,7 @@ impl Matcher {
                         payload.last_timestamp_ns,
                     )?;
                     result.push(Observation::issue(
+                        protocol,
                         route,
                         event,
                         if reason.starts_with("unsupported") {
@@ -649,6 +696,7 @@ impl Matcher {
                     payload.last_timestamp_ns,
                 )?;
                 result.push(Observation::issue(
+                    protocol,
                     route,
                     event,
                     Status::ResourceLimit,
@@ -660,11 +708,11 @@ impl Matcher {
             let deadline = payload
                 .last_timestamp_ns
                 .checked_add(policy.p2_ns)
-                .ok_or_else(|| anyhow::anyhow!("UDS P2 deadline overflow"))?;
+                .ok_or_else(|| anyhow::anyhow!("diagnostic P2 deadline overflow"))?;
             let total_deadline = payload
                 .last_timestamp_ns
                 .checked_add(policy.transaction_max_duration_ns)
-                .ok_or_else(|| anyhow::anyhow!("UDS total deadline overflow"))?;
+                .ok_or_else(|| anyhow::anyhow!("diagnostic total deadline overflow"))?;
             let key = format!(
                 "{:x}",
                 Sha256::digest(serde_json::to_vec(&(
@@ -677,6 +725,7 @@ impl Matcher {
             self.reserved += data.len();
             self.open.push(Transaction {
                 key,
+                protocol,
                 binding,
                 header,
                 request: payload,
@@ -688,10 +737,15 @@ impl Matcher {
             });
             return Ok(vec![]);
         }
-        let response = match response_header(&data) {
+        let classified = match protocol {
+            Protocol::Uds2013 => response_header(&data),
+            Protocol::Kwp2000Vector => crate::kwp::response_header(&data),
+        };
+        let response = match classified {
             Ok(header) => header,
             Err(reason) => {
                 return Ok(vec![Observation::issue(
+                    protocol,
                     route,
                     event,
                     if reason.starts_with("unsupported") {
@@ -717,12 +771,22 @@ impl Matcher {
                 {
                     return None;
                 }
-                let result = matches(&t.header, &response, &data);
+                let result = match protocol {
+                    Protocol::Uds2013 => matches(&t.header, &response, &data),
+                    Protocol::Kwp2000Vector => {
+                        if crate::kwp::matches(&t.header, &response, &data) {
+                            Match::Yes
+                        } else {
+                            Match::No
+                        }
+                    }
+                };
                 (result != Match::No).then_some((index, result))
             })
             .collect();
         if candidates.is_empty() {
             let mut issue = Observation::issue(
+                protocol,
                 route,
                 event,
                 Status::Orphan,
@@ -778,7 +842,7 @@ impl Matcher {
             transaction.deadline = payload
                 .last_timestamp_ns
                 .checked_add(self.config.routes[binding].p2_star_ns)
-                .ok_or_else(|| anyhow::anyhow!("UDS P2* deadline overflow"))?
+                .ok_or_else(|| anyhow::anyhow!("diagnostic P2* deadline overflow"))?
                 .min(transaction.total_deadline);
             let mut observed = transaction.observation(
                 route,

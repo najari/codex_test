@@ -9,6 +9,7 @@ pub mod formats;
 pub mod id_map;
 pub mod index;
 pub mod isotp;
+pub mod kwp;
 pub mod output;
 pub mod playback;
 pub mod signal_export;

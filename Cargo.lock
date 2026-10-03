@@ -156,7 +156,7 @@ dependencies = [
 [[package]]
 name = "cdd-api"
 version = "0.0.1"
-source = "git+https://github.com/najari/cdd-rust-engine?rev=70d800879b164c577ba8075de63a19b26c9b1f9b#70d800879b164c577ba8075de63a19b26c9b1f9b"
+source = "git+https://github.com/najari/cdd-rust-engine?rev=9207dfc845d5d256eb479073824bad234b27f79b#9207dfc845d5d256eb479073824bad234b27f79b"
 dependencies = [
  "cdd-codec",
  "cdd-core",
@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "cdd-codec"
 version = "0.0.1"
-source = "git+https://github.com/najari/cdd-rust-engine?rev=70d800879b164c577ba8075de63a19b26c9b1f9b#70d800879b164c577ba8075de63a19b26c9b1f9b"
+source = "git+https://github.com/najari/cdd-rust-engine?rev=9207dfc845d5d256eb479073824bad234b27f79b#9207dfc845d5d256eb479073824bad234b27f79b"
 dependencies = [
  "cdd-core",
  "cdd-xml",
@@ -180,7 +180,7 @@ dependencies = [
 [[package]]
 name = "cdd-core"
 version = "0.0.1"
-source = "git+https://github.com/najari/cdd-rust-engine?rev=70d800879b164c577ba8075de63a19b26c9b1f9b#70d800879b164c577ba8075de63a19b26c9b1f9b"
+source = "git+https://github.com/najari/cdd-rust-engine?rev=9207dfc845d5d256eb479073824bad234b27f79b#9207dfc845d5d256eb479073824bad234b27f79b"
 dependencies = [
  "cdd-xml",
  "sha2",
@@ -191,7 +191,7 @@ dependencies = [
 [[package]]
 name = "cdd-store"
 version = "0.0.1"
-source = "git+https://github.com/najari/cdd-rust-engine?rev=70d800879b164c577ba8075de63a19b26c9b1f9b#70d800879b164c577ba8075de63a19b26c9b1f9b"
+source = "git+https://github.com/najari/cdd-rust-engine?rev=9207dfc845d5d256eb479073824bad234b27f79b#9207dfc845d5d256eb479073824bad234b27f79b"
 dependencies = [
  "cdd-core",
  "rusqlite",
@@ -201,7 +201,7 @@ dependencies = [
 [[package]]
 name = "cdd-xml"
 version = "0.0.1"
-source = "git+https://github.com/najari/cdd-rust-engine?rev=70d800879b164c577ba8075de63a19b26c9b1f9b#70d800879b164c577ba8075de63a19b26c9b1f9b"
+source = "git+https://github.com/najari/cdd-rust-engine?rev=9207dfc845d5d256eb479073824bad234b27f79b#9207dfc845d5d256eb479073824bad234b27f79b"
 dependencies = [
  "sha2",
  "thiserror",

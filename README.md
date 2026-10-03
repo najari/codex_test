@@ -32,6 +32,7 @@ Windows에는 Rust MSVC toolchain 1.88 이상, Visual Studio C++ Build Tools, Wi
 | `replay INPUT` | 기본 1배속·1회, JSONL stdout으로 재생 |
 | `replay INPUT --dbc CHANNEL=PATH` | 재생 시간에 맞춰 DBC 신호 출력; JSONL 또는 `--sink console` |
 | `uds INPUT --routes ROUTES --policy POLICY` | 물리 ISO-TP 기반 UDS 요청·응답·pending과 선택적 CDD 해석 |
+| `kwp INPUT --routes ROUTES --policy POLICY` | 기존 Vector KWP2000 물리 요청·응답과 CDD 식별 필드 해석 |
 | `cdd-info INPUT --allow-experimental` | CDD ECU·variant·서비스·DID·diagnostics 검사; `-Cdd` 빌드 필요 |
 | `index build INPUT -o INDEX` / `index info INDEX` | 원본 payload를 복제하지 않는 SQLite 검색 인덱스 작성/조회 |
 | `index query INPUT --index INDEX` | 원본을 확인하고 선택 chunk부터 읽는 JSONL 검색 |
@@ -155,5 +156,7 @@ python -m venv .\target\verify-env
 [기존 검증 결과](docs/validation.md), [추가 샘플·ASC 호환성 검증](docs/corpus-validation.md), [SQLite·DBC 검증](docs/index-dbc-validation.md), [workspace 검증](docs/workspace-validation.md), [재연결 검증](docs/relink-validation.md), [원래 구현 계획](docs/implementation-plan.md), [장기 설계](docs/canlog-rs-design.md)를 참고한다.
 
 현재 완료 범위와 남은 우선순위는 [후속 작업 목록](docs/remaining-work.md)에 정리했다.
+
+기존 CANSystem ASC·DBC·CDD를 한 CLI에서 사용하는 [통합 예제](examples/asc-dbc-cdd/README.md)를 제공한다. `kwp`/`uds`에 `--dbc CHANNEL=PATH`, 단일 route에는 `--cdd PATH --ecu QUAL --variant QUAL --allow-experimental`을 지정한다. 지원 경계는 [KWP·CDD 문서](docs/kwp-cdd.md)를 따른다.
 
 UDS/CDD의 예제 CLI, 선택적 빌드와 지원 경계는 [UDS·CDD 문서](docs/uds-cdd.md)에 정리했다. `examples/uds-cantools.policy.json`은 제공된 로컬 CDD의 ECU·variant를 명시한다.

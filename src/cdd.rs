@@ -9,7 +9,7 @@ use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
-pub const ENGINE_REVISION: &str = "70d800879b164c577ba8075de63a19b26c9b1f9b";
+pub const ENGINE_REVISION: &str = "9207dfc845d5d256eb479073824bad234b27f79b";
 pub fn inspect(
     path: &std::path::Path,
     allow_experimental: bool,
@@ -161,9 +161,10 @@ impl Decoder {
                     },
                 )?;
                 ensure!(
-                    format!("{:?}", engine.model().protocol) == "Uds",
-                    "CDD protocol {:?} does not match the explicit UDS route policy",
-                    engine.model().protocol
+                    engine.model().protocol.label() == route.protocol.cdd_label(),
+                    "CDD protocol {:?} does not match the explicit route policy {:?}",
+                    engine.model().protocol,
+                    route.protocol
                 );
                 let ecu = engine.select_ecu(&assignment.ecu)?;
                 let variant = engine.select_variant(ecu, &assignment.variant)?;

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "routes": [
+    {
+      "route": "engine-demo",
+      "protocol": "kwp2000_vector",
+      "p2_ns": 150000000,
+      "p2_star_ns": 2000000000,
+      "transaction_max_duration_ns": 5000000000
+    }
+  ]
+}

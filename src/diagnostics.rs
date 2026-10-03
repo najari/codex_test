@@ -25,6 +25,27 @@ pub struct IsotpOutput {
     #[arg(long)]
     pub overwrite: bool,
 }
+#[derive(Debug, Default, Clone, clap::Args)]
+pub struct Definitions {
+    /// Decode every CAN frame with explicit channel-to-DBC assignments.
+    #[arg(long, value_name = "CHANNEL=PATH")]
+    pub dbc: Vec<String>,
+    /// Assign a CDD to a policy containing exactly one route and no CDD assignment.
+    #[arg(long, value_name = "PATH", requires_all = ["ecu", "variant", "allow_experimental"])]
+    pub cdd: Option<PathBuf>,
+    #[arg(long, requires = "cdd")]
+    pub ecu: Option<String>,
+    #[arg(long, requires = "cdd")]
+    pub variant: Option<String>,
+    #[arg(long, requires = "cdd")]
+    pub allow_experimental: bool,
+}
+#[derive(Clone, Copy)]
+struct AnalysisRequest<'a> {
+    policy: Option<&'a Path>,
+    protocol: Option<crate::uds::Protocol>,
+    definitions: &'a Definitions,
+}
 #[derive(Debug, Default, Serialize)]
 pub struct Report {
     pub schema_version: u32,
@@ -42,10 +63,22 @@ pub struct Report {
     pub uds_policy_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uds_counts: Option<BTreeMap<String, u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kwp_policy: Option<crate::uds::Config>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kwp_policy_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kwp_counts: Option<BTreeMap<String, u64>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cdd_assignments: Vec<crate::cdd::Summary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cdd_counts: Option<BTreeMap<String, u64>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dbc_assignments: Vec<crate::dbc::Assignment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dbc_engine_revision: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dbc_counts: Option<BTreeMap<String, u64>>,
     #[serde(skip)]
     cdd_decoder: Option<crate::cdd::Decoder>,
     #[serde(skip)]
@@ -60,6 +93,16 @@ pub struct Report {
     pub scan_complete: bool,
     pub published: bool,
     pub error: Option<String>,
+}
+impl Report {
+    fn policy(&self) -> Option<&crate::uds::Config> {
+        self.uds_policy.as_ref().or(self.kwp_policy.as_ref())
+    }
+    fn policy_hash(&self) -> Option<&str> {
+        self.uds_policy_sha256
+            .as_deref()
+            .or(self.kwp_policy_sha256.as_deref())
+    }
 }
 #[derive(Serialize)]
 struct Row<'a> {
@@ -90,6 +133,56 @@ fn protect_cdd(path: &Path, policy: Option<&crate::uds::Config>) -> Result<()> {
     }
     Ok(())
 }
+fn protect_definitions(path: &Path, definitions: &Definitions) -> Result<()> {
+    ensure!(
+        definitions.dbc.len() <= 16,
+        "at most 16 DBC assignments are allowed"
+    );
+    for binding in &definitions.dbc {
+        let (_, database) = binding
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("DBC binding must be CHANNEL=PATH"))?;
+        output::ensure_distinct_paths(path, Path::new(database))?;
+    }
+    if let Some(cdd) = &definitions.cdd {
+        output::ensure_distinct_paths(path, cdd)?;
+    }
+    Ok(())
+}
+fn emit_dbc(
+    writer: &mut dyn Write,
+    decoded: crate::dbc::DecodedFrame,
+    report: &mut Report,
+) -> Result<()> {
+    *report
+        .dbc_counts
+        .as_mut()
+        .unwrap()
+        .entry(decoded.status.clone())
+        .or_default() += 1;
+    #[derive(Serialize)]
+    struct DbcRow<'a> {
+        analyzer: &'static str,
+        timeline_key: &'a str,
+        result_key: String,
+        #[serde(flatten)]
+        decoded: &'a crate::dbc::DecodedFrame,
+    }
+    let timeline_key = report.timeline_key.as_deref().unwrap();
+    let identity = serde_json::to_vec(&(timeline_key, crate::dbc::ADAPTER_ID, &decoded))?;
+    serde_json::to_writer(
+        &mut *writer,
+        &DbcRow {
+            analyzer: crate::dbc::ADAPTER_ID,
+            timeline_key,
+            result_key: digest(&identity),
+            decoded: &decoded,
+        },
+    )?;
+    writeln!(writer)?;
+    report.output_rows += 1;
+    Ok(())
+}
 fn emit_uds(
     writer: &mut dyn Write,
     observations: Vec<crate::uds::Observation>,
@@ -114,12 +207,12 @@ fn emit_uds(
             .as_str()
             .unwrap()
             .to_owned();
-        *report
-            .uds_counts
-            .as_mut()
-            .unwrap()
-            .entry(status)
-            .or_default() += 1;
+        let counts = match observation.protocol {
+            crate::uds::Protocol::Uds2013 => report.uds_counts.as_mut(),
+            crate::uds::Protocol::Kwp2000Vector => report.kwp_counts.as_mut(),
+        }
+        .unwrap();
+        *counts.entry(status).or_default() += 1;
         let timeline_key = report.timeline_key.as_deref().unwrap();
         let mut identity = timeline_key.as_bytes().to_vec();
         identity.extend_from_slice(&serde_json::to_vec(&observation)?);
@@ -211,7 +304,17 @@ pub fn analyze(
     out: &IsotpOutput,
     cancel: &Cancellation,
 ) -> (Report, Result<()>) {
-    analyze_inner(args, routes, None, out, cancel)
+    analyze_inner(
+        args,
+        routes,
+        AnalysisRequest {
+            policy: None,
+            protocol: None,
+            definitions: &Definitions::default(),
+        },
+        out,
+        cancel,
+    )
 }
 pub fn analyze_uds(
     args: &InputArgs,
@@ -220,30 +323,87 @@ pub fn analyze_uds(
     out: &IsotpOutput,
     cancel: &Cancellation,
 ) -> (Report, Result<()>) {
-    analyze_inner(args, routes, Some(policy), out, cancel)
+    analyze_with_definitions(
+        args,
+        routes,
+        policy,
+        crate::uds::Protocol::Uds2013,
+        &Definitions::default(),
+        out,
+        cancel,
+    )
+}
+pub fn analyze_kwp(
+    args: &InputArgs,
+    routes: &Path,
+    policy: &Path,
+    out: &IsotpOutput,
+    cancel: &Cancellation,
+) -> (Report, Result<()>) {
+    analyze_with_definitions(
+        args,
+        routes,
+        policy,
+        crate::uds::Protocol::Kwp2000Vector,
+        &Definitions::default(),
+        out,
+        cancel,
+    )
+}
+pub fn analyze_with_definitions(
+    args: &InputArgs,
+    routes: &Path,
+    policy: &Path,
+    protocol: crate::uds::Protocol,
+    definitions: &Definitions,
+    out: &IsotpOutput,
+    cancel: &Cancellation,
+) -> (Report, Result<()>) {
+    analyze_inner(
+        args,
+        routes,
+        AnalysisRequest {
+            policy: Some(policy),
+            protocol: Some(protocol),
+            definitions,
+        },
+        out,
+        cancel,
+    )
 }
 fn analyze_inner(
     args: &InputArgs,
     routes: &Path,
-    policy: Option<&Path>,
+    request: AnalysisRequest<'_>,
     out: &IsotpOutput,
     cancel: &Cancellation,
 ) -> (Report, Result<()>) {
+    let policy = request.policy;
+    let expected_protocol = request.protocol;
     let mut report = Report {
         schema_version: 1,
-        analyzer: if policy.is_some() {
-            "canlog-uds2013-physical-v1"
-        } else {
-            ANALYZER
+        analyzer: match expected_protocol {
+            Some(crate::uds::Protocol::Uds2013) => "canlog-uds2013-physical-v1",
+            Some(crate::uds::Protocol::Kwp2000Vector) => "canlog-kwp2000-vector-physical-v1",
+            None => ANALYZER,
         }
         .into(),
         status: "running".into(),
         ..Default::default()
     };
-    let result = execute(args, routes, policy, out, cancel, &mut report);
+    let result = execute(args, routes, request, out, cancel, &mut report);
     report.status = match &result {
         Err(e) if e.is::<crate::playback::Cancelled>() => "cancelled",
         Err(_) => "failed",
+        Ok(())
+            if report.dbc_counts.as_ref().is_some_and(|counts| {
+                counts
+                    .iter()
+                    .any(|(status, count)| *count > 0 && status != "decoded")
+            }) =>
+        {
+            "partial"
+        }
         Ok(())
             if report
                 .cdd_assignments
@@ -258,15 +418,20 @@ fn analyze_inner(
             "partial"
         }
         Ok(())
-            if report.uds_counts.as_ref().is_some_and(|counts| {
-                counts.iter().any(|(status, count)| {
-                    *count > 0
-                        && !matches!(
-                            status.as_str(),
-                            "positive" | "negative" | "pending" | "suppressed_expected"
-                        )
-                })
-            }) =>
+            if report
+                .uds_counts
+                .as_ref()
+                .into_iter()
+                .chain(report.kwp_counts.as_ref())
+                .any(|counts| {
+                    counts.iter().any(|(status, count)| {
+                        *count > 0
+                            && !matches!(
+                                status.as_str(),
+                                "positive" | "negative" | "pending" | "suppressed_expected"
+                            )
+                    })
+                }) =>
         {
             "partial"
         }
@@ -291,7 +456,8 @@ fn analyze_inner(
     if let Some(path) = &args.report {
         let write = (|| {
             protect(path, args, routes)?;
-            protect_cdd(path, report.uds_policy.as_ref())?;
+            protect_definitions(path, request.definitions)?;
+            protect_cdd(path, report.policy())?;
             if let Some(policy) = policy {
                 output::ensure_distinct_paths(path, policy)?;
             }
@@ -309,11 +475,14 @@ fn analyze_inner(
 fn execute(
     args: &InputArgs,
     routes: &Path,
-    policy: Option<&Path>,
+    request: AnalysisRequest<'_>,
     out: &IsotpOutput,
     cancel: &Cancellation,
     report: &mut Report,
 ) -> Result<()> {
+    let policy = request.policy;
+    let expected_protocol = request.protocol;
+    let definitions = request.definitions;
     ensure!(
         args.input != "-" && !args.preserve_records,
         "ISO-TP requires a file and semantic parsing"
@@ -334,12 +503,14 @@ fn execute(
     );
     if let Some(path) = &out.output {
         protect(path, args, routes)?;
+        protect_definitions(path, definitions)?;
         if let Some(policy) = policy {
             output::ensure_distinct_paths(path, policy)?;
         }
     }
     if let Some(path) = &args.report {
         protect(path, args, routes)?;
+        protect_definitions(path, definitions)?;
         if let Some(policy) = policy {
             output::ensure_distinct_paths(path, policy)?;
         }
@@ -360,7 +531,7 @@ fn execute(
     if let Some(path) = policy {
         let mut bytes = vec![];
         File::open(path)?.take(262_145).read_to_end(&mut bytes)?;
-        ensure!(bytes.len() <= 262_144, "UDS policy exceeds 256 KiB");
+        ensure!(bytes.len() <= 262_144, "diagnostic policy exceeds 256 KiB");
         let mut uds: crate::uds::Config = serde_json::from_slice(&bytes)?;
         for binding in &mut uds.routes {
             if let Some(cdd) = &mut binding.cdd {
@@ -369,20 +540,67 @@ fn execute(
                 }
             }
         }
-        report.uds_policy = Some(uds);
-        report.uds_policy.as_ref().unwrap().validate(&config)?;
-        for dest in [&out.output, &args.report].into_iter().flatten() {
-            protect_cdd(dest, report.uds_policy.as_ref())?;
+        if let Some(path) = &definitions.cdd {
+            ensure!(
+                definitions.allow_experimental,
+                "CDD profile is experimental; specify --allow-experimental"
+            );
+            ensure!(uds.routes.len() == 1 && uds.routes[0].cdd.is_none(), "--cdd requires exactly one policy route without a CDD assignment; use policy assignments for multiple routes");
+            uds.routes[0].cdd = Some(crate::cdd::Assignment {
+                path: path.canonicalize()?,
+                ecu: definitions
+                    .ecu
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("--cdd requires --ecu"))?,
+                variant: definitions
+                    .variant
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("--cdd requires --variant"))?,
+                allow_experimental: true,
+            });
         }
-        let decoder = crate::cdd::Decoder::load(report.uds_policy.as_ref().unwrap(), cancel)?;
+        match expected_protocol {
+            Some(crate::uds::Protocol::Kwp2000Vector) => report.kwp_policy = Some(uds),
+            _ => report.uds_policy = Some(uds),
+        }
+        let configured = report.policy().unwrap();
+        configured.validate(&config)?;
+        ensure!(
+            configured
+                .routes
+                .iter()
+                .all(|r| Some(r.protocol) == expected_protocol),
+            "route policy protocol must match the selected diagnostic command"
+        );
+        for dest in [&out.output, &args.report].into_iter().flatten() {
+            protect_cdd(dest, report.policy())?;
+        }
+        let decoder = crate::cdd::Decoder::load(report.policy().unwrap(), cancel)?;
         report.cdd_assignments = decoder.summaries.clone();
         if !report.cdd_assignments.is_empty() {
             report.cdd_counts = Some(BTreeMap::new());
         }
         report.cdd_decoder = Some(decoder);
-        report.uds_policy_sha256 = Some(digest(&bytes));
-        report.uds_counts = Some(BTreeMap::new());
+        match expected_protocol {
+            Some(crate::uds::Protocol::Kwp2000Vector) => {
+                report.kwp_policy_sha256 = Some(digest(&bytes));
+                report.kwp_counts = Some(BTreeMap::new());
+            }
+            _ => {
+                report.uds_policy_sha256 = Some(digest(&bytes));
+                report.uds_counts = Some(BTreeMap::new());
+            }
+        }
     }
+    let mut dbc_decoder = if definitions.dbc.is_empty() {
+        None
+    } else {
+        let decoder = crate::dbc::Decoder::load(&definitions.dbc, cancel)?;
+        report.dbc_assignments = decoder.assignments.clone();
+        report.dbc_engine_revision = Some(crate::dbc::ENGINE_REVISION);
+        report.dbc_counts = Some(BTreeMap::new());
+        Some(decoder)
+    };
     let routes_hash = digest(&bytes);
     let source_hash = index::hash_file(Path::new(&args.input), cancel)?;
     let processing = index::Processing::of(args, cancel)?;
@@ -405,7 +623,7 @@ fn execute(
         report.timeline_key = Some(digest(&serde_json::to_vec(&(
             &report.analyzer,
             &report.timeline_key,
-            &report.uds_policy_sha256,
+            &report.policy_hash(),
             format!("{:?}", args.unsupported),
             args.recover,
         ))?));
@@ -416,9 +634,17 @@ fn execute(
             &report.cdd_assignments,
         ))?));
     }
+    if !report.dbc_assignments.is_empty() {
+        report.timeline_key = Some(digest(&serde_json::to_vec(&(
+            &report.timeline_key,
+            crate::dbc::ADAPTER_ID,
+            crate::dbc::ENGINE_REVISION,
+            &report.dbc_assignments,
+        ))?));
+    }
     let mut matcher = report
-        .uds_policy
-        .clone()
+        .policy()
+        .cloned()
         .map(|policy| {
             crate::uds::Matcher::new(
                 policy,
@@ -448,6 +674,9 @@ fn execute(
                 let result = reassembler.feed(&record);
                 report.frames_matched = reassembler.matched_frames;
                 let events = result?;
+                if let Some(decoder) = &mut dbc_decoder {
+                    emit_dbc(&mut *writer, decoder.decode(record)?, report)?;
+                }
                 if !events.iter().any(|e| {
                     e.kind == "protocol_issue" || (e.kind == "payload" && e.status != "complete")
                 }) {
@@ -529,8 +758,8 @@ fn execute(
     );
     if let Some(policy) = policy {
         ensure!(
-            Some(index::hash_file(policy, cancel)?) == report.uds_policy_sha256,
-            "UDS policy changed during analysis"
+            index::hash_file(policy, cancel)? == report.policy_hash().unwrap(),
+            "diagnostic policy changed during analysis"
         );
     }
     ensure!(
@@ -543,6 +772,9 @@ fn execute(
             index::hash_file(&assignment.path, cancel)? == assignment.sha256,
             "CDD changed during analysis"
         );
+    }
+    if let Some(decoder) = dbc_decoder {
+        decoder.verify_databases(cancel)?;
     }
     report.scan_complete = true;
     if let Some(atomic) = atomic {

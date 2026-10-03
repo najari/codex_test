@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "routes": [
+    {
+      "route": "comfort-demo", "protocol": "kwp2000_vector",
+      "p2_ns": 150000000, "p2_star_ns": 2000000000,
+      "transaction_max_duration_ns": 5000000000,
+      "cdd": {
+        "path": "../can_example/vector_samples/2026-10-03/groups/CANoe_13.0.172/CAN/CANSystemDemo/cdd/CDD/CANSystemDoor.cdd",
+        "ecu": "Any_ECU_example", "variant": "COMMON_DIAGNOSTICS",
+        "allow_experimental": true
+      }
+    },
+    {
+      "route": "engine-demo", "protocol": "kwp2000_vector",
+      "p2_ns": 150000000, "p2_star_ns": 2000000000,
+      "transaction_max_duration_ns": 5000000000,
+      "cdd": {
+        "path": "../can_example/vector_samples/2026-10-03/groups/CANoe_13.0.172/CAN/CANSystemDemo/cdd/CDD/CANSystem.cdd",
+        "ecu": "Any_ECU_example", "variant": "COMMON_DIAGNOSTICS",
+        "allow_experimental": true
+      }
+    }
+  ]
+}

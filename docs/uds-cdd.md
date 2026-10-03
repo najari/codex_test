@@ -22,6 +22,8 @@
 
 `-o output.jsonl --report report.json`으로 결과를 저장할 수 있다. 기본값은 기존 출력을 보호하며 교체에는 `--overwrite`가 필요하다. report는 새 경로여야 한다. source·routes·policy·ID map·CDD와 같은 파일 또는 hardlink 실체에는 출력/report를 저장할 수 없다. 분석 전후 내용 hash를 확인하고, 파일 결과는 완료 후 게시한다. stdout은 실패 시 이미 출력된 내용을 되돌릴 수 없다. 결과와 report는 별도 원자적 파일로 저장한다.
 
+`uds`에도 `--dbc CHANNEL=PATH`를 반복 지정해 DBC 프레임과 CDD transaction을 한 JSONL에 기록할 수 있다. CDD assignment가 없는 단일 route policy에는 `--cdd PATH --ecu QUAL --variant QUAL --allow-experimental`을 직접 지정한다. 각 단계의 상태와 원본 frame 위치를 유지한다. 기존 KWP 로그를 사용하는 실제 [ASC·DBC·CDD 통합 예제](../examples/asc-dbc-cdd/README.md)를 참고한다.
+
 ## 매칭 계약
 
 UDS policy schema 1은 각 transport route에 `protocol: "uds2013"`, `p2_ns`, `p2_star_ns`, `transaction_max_duration_ns`를 필수 지정한다. 기존 KWP 데모 로그에 UDS를 자동 적용하지 않는다. DiagnosticSessionControl의 응답에 있는 timing 값을 다음 요청의 policy로 자동 적용하지 않는다.
@@ -58,7 +60,7 @@ EOF만으로 ECU timeout이나 suppress 성공을 단정하지 않는다. `--uns
 
 ## CDD facade와 provenance
 
-선택적 Cargo feature `cdd`는 [cdd-rust-engine](https://github.com/najari/cdd-rust-engine)의 commit `70d800879b164c577ba8075de63a19b26c9b1f9b`를 Git dependency로 고정한다. DBC 엔진과 같은 방식으로 빌드 시 Cargo가 cache/fetch하고 실제 Rust facade·codec을 컴파일한다. canlog에 CDD XML parser의 일부를 복제하지 않는다. 생성한 exe는 실행 시 GitHub나 Python에 접속하지 않는다. 원본 CDD는 runtime 입력 파일이다.
+선택적 Cargo feature `cdd`는 [cdd-rust-engine](https://github.com/najari/cdd-rust-engine)의 commit `9207dfc845d5d256eb479073824bad234b27f79b`를 Git dependency로 고정한다. DBC 엔진과 같은 방식으로 빌드 시 Cargo가 cache/fetch하고 실제 Rust facade·codec을 컴파일한다. canlog에 CDD XML parser의 일부를 복제하지 않는다. 생성한 exe는 실행 시 GitHub나 Python에 접속하지 않는다. 원본 CDD는 runtime 입력 파일이다.
 
 해당 엔진의 profile maturity는 **experimental**이다. route의 `cdd.allow_experimental: true` 또는 `cdd-info --allow-experimental`을 명시해야 한다. `cdd-info`는 Unknown 프로토콜도 검사하지만 UDS route 배정은 모델이 Uds일 때만 허용한다.
 
