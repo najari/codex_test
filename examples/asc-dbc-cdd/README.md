@@ -44,3 +44,5 @@ Engine 진단 로그도 같은 방식으로 실행한다.
 기본 출력은 프로젝트의 새 `artifacts/asc-dbc-cdd_<timestamp>_<suffix>` 폴더다. `-OutputDirectory`와 `-Exe`로 경로를 지정할 수 있다. 기존 출력과 report는 보호한다. 스크립트의 성공은 분석 실행 성공을 뜻하며 원본의 부분 품질을 complete로 변경하지 않는다.
 
 `--cdd`는 CDD assignment가 없는 **단일 route policy**의 편의 옵션이다. 여러 ECU/route에서는 policy에 각 CDD를 지정하고 `--dbc`를 반복한다. CLI `--cdd`와 policy의 기존 CDD assignment를 동시에 지정하면 오류다. DBC와 CLI CDD path는 현재 작업 폴더 기준, policy 내부 CDD path는 policy 폴더 기준이다. `uds` 명령에도 동일 옵션이 있지만 이 기존 샘플의 프로토콜은 KWP다.
+
+CDD 옵션을 생략하면 ISO-TP raw `payload.data_hex`와 DBC frame 결과를 출력한다. KWP 서비스 식별·transaction 연결은 CDD가 지정된 경로에서만 수행한다. 내부 KWP profile은 사용하지 않는다.

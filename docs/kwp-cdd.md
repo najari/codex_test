@@ -31,27 +31,26 @@ Vector CANSystemDemo 설정에서 확인한 연결은 다음과 같다. 샘플 �
 
 `-o output.jsonl --report report.json`을 추가하면 결과와 품질 집계를 저장한다. 기존 출력은 기본 보호하며 `--overwrite`로 데이터 출력만 교체할 수 있다. report는 새 파일이어야 한다. 원본·정책·CDD를 출력으로 덮어쓸 수 없다. 실제 샘플의 미정의 요청·경고·응답 누락 때문에 **종료 코드 3인 부분 성공이 정상적인 관측 결과**다.
 
-## 지원 경계
+## CDD가 없는 raw 출력
 
-| SID | 이 profile의 요청과 positive 응답 |
-|---|---|
-| `10` | full DiagnosticMode byte echo; `81`을 suppress bit로 해석하지 않음 |
-| `11` | full ResetMode echo; legacy reset record는 opaque |
-| `14` | 2-byte DTC group echo |
-| `18` | 요청 mode 02/03 + 2-byte group; 응답은 count + 2-byte DTC/1-byte status 목록, mode echo 없음 |
-| `1A`, `21` | 1-byte local identifier echo; 데이터는 CDD 또는 opaque |
-| `3B` | local identifier + 요청 데이터, 응답 local identifier echo |
-| `20` | SID-only StopDiagnosticSession |
-| `3E` | 요청 01은 `7E` 응답, 요청 02는 positive 응답을 기대하지 않음; UDS `7E 00`을 적용하지 않음 |
+CDD assignment가 없는 경로는 서비스나 요청·응답 관계를 추측하지 않는다. ISO-TP `payload`의 `data_hex`와 원본 위치를 그대로 출력하며, DBC를 지정하면 `decoded_frame`도 함께 출력한다. `kwp_transaction`/`kwp_pending`은 CDD를 지정한 경로에서만 생성한다. 기본 빌드에서도 CDD 없는 raw 출력을 사용할 수 있다.
 
-negative는 `7F SID NRC`, NRC `78`은 pending이다. echo가 없는 DTC/TesterPresent 또는 같은 SID의 negative에 후보가 여러 개면 ambiguous다. P2/P2*, 고정 전체 관측 상한, 자원 상한, transport gap와 EOF 처리는 [UDS 매칭 계약](uds-cdd.md)을 공유한다. EOF만으로 timeout 또는 suppress 성공을 확정하지 않는다. 제조사별 추가 서비스나 전체 KWP 규격의 지원을 의미하지 않는다.
+```powershell
+.\dist\canlog.exe kwp "$s\asc\Logging\ComfortDiagData.asc" `
+  --routes .\examples\asc-dbc-cdd\comfort.routes.json `
+  --policy .\examples\asc-dbc-cdd\comfort.policy.json
+```
 
-KWP framing 설명은 [NI Automotive Diagnostic Command Set 매뉴얼](https://download.ni.com/support/manuals/372139d.pdf)을 참고했고, 위 mode·echo profile은 제공된 CDD의 프로토콜 정의와 실제 ASC로 검증했다.
+진단 replay에서도 같은 routes/policy에 `--protocol kwp2000-vector`를 지정하고 CDD 옵션을 생략하면 raw payload를 재생한다.
 
-## CDD 엔진과 검증
+## 지원 경계와 CDD 엔진
 
-CDD parser를 canlog에 복제하지 않는다. 별도 [CDD 엔진의 KWP commit](https://github.com/najari/cdd-rust-engine/commit/9207dfc845d5d256eb479073824bad234b27f79b)을 Cargo Git revision으로 고정한다. 이 commit은 `codex/kwp2000-codec` 브랜치에 게시되어 있으며 upstream `master`에 병합된 상태는 아니다. 임시 local path patch 없이 빌드한다. 기본 빌드는 Rust 1.88, `-Cdd` 빌드는 Rust 1.98.1 이상이 필요하다. 실행 시 GitHub/Python 접속은 없다.
+canlog의 내부 KWP SID 목록, 헤더 길이, echo, DTC count 및 TesterPresent mode 판별 코드는 제거했다. 별도 [CDD 엔진 master의 업데이트](https://github.com/najari/cdd-rust-engine/commit/ecd4a6a42792636a8386439653950e8693818d02)를 Cargo Git revision으로 고정한다. 빌드 시 Cargo가 가져와 컴파일하며 실행 시 GitHub나 Python에 접속하지 않는다. 기본 빌드는 Rust 1.88, `-Cdd` 빌드는 Rust 1.98.1 이상이 필요하다.
 
-엔진은 실험적 `kwp-candela-2x` profile로 CDD가 선언한 SID·static·datatype·NRC를 해석한다. legacy `STATICCOMP bl="8"`에 `dtref`가 없는 경우만 unsigned 1-byte static을 지원한다. invalid `dtref`, wider inline width, 미충족 proxy와 지원 밖 component를 추측하지 않는다. BCD 값은 decimal raw 정수로 출력하며 native field key·wire span·provenance·diagnostics를 보존한다.
+CDD가 지정되면 엔진의 `identify`, `request_context`, `decode_response`가 서비스 식별과 응답 검증을 결정한다. 서비스 SID와 key도 엔진 모델에서 얻는다. 실험적 공통 profile은 `uds-candela-2x`이며 provenance의 `protocol`이 `kwp2000`인지 함께 확인한다. legacy inline 8-bit static과 BCD를 포함한 native field key, wire span, provenance, diagnostics를 유지한다.
 
-검증: [KWP·CDD 실샘플 결과](kwp-cdd-validation.md). 기존 ASC 3개에서 74 CAN frames, 66 ISO-TP payload, 24 positive transaction을 비교했다. Engine의 TesterPresent 요청 18개 중 17개는 응답 deadline 경과, 1개는 EOF incomplete다. Engine DTC response의 빈 CDD proxy 2개는 decode error로 남는다. Comfort의 legacy session/reset 요청 등도 미정의 상태를 유지한다.
+CDD에서 유일하게 식별되지 않는 요청은 `kwp_issue`로 raw payload와 native identification을 남긴다. 응답도 해당 native 서비스 정의에 맞아야 transaction으로 연결한다. prefix만 검증 가능한 응답은 ambiguous/unverified, 매칭되지 않는 응답은 orphan으로 남긴다. 미정의 요청을 처리할 별도 KWP fallback은 없다. 같은 SID의 negative 응답 등 여러 요청에 대응할 수 있는 경우 FIFO로 연결하지 않는다.
+
+canlog는 ISO-TP, 재생 시간 제어와 P2/P2*, 전체 관측·자원 상한, transport gap/EOF 상태만 관리한다. NRC pending 값은 엔진의 decoded negative 결과에서 얻는다. KWP mode byte를 UDS suppress bit로 해석하거나 CDD 밖의 TesterPresent suppression 규칙을 적용하지 않는다. EOF만으로 timeout 또는 성공을 확정하지 않는다. UDS의 기존 헤더 profile은 유지한다.
+
+새 분석 identity는 `canlog-kwp2000-cdd-physical-v2`다. 이전 내부 profile이 CDD 없는 요청도 positive로 세던 결과와 집계가 달라질 수 있다. Vector 샘플의 미정의 session/reset 및 미지원 DTC proxy는 부분 결과로 남는다. [실샘플 검증](kwp-cdd-validation.md)을 참고한다.

@@ -102,7 +102,7 @@ fn diagnostic_replay_emits_live_rows_at_scaled_time_and_keeps_analysis_values() 
         serde_json::from_slice(&fs::read(dir.path().join("replay.report.json")).unwrap()).unwrap();
     assert_eq!(report["replay"]["speed"], 2.0);
     assert_eq!(report["replay"]["no_wait"], false);
-    assert_eq!(report["kwp_counts"]["positive"], 1);
+    assert_eq!(report["kwp_counts"], json!({}));
     let instant = replay(
         dir.path(),
         &[
@@ -227,26 +227,27 @@ fn combined_dbc_and_kwp_rows_share_identity_and_keep_independent_quality() {
     assert_eq!(frames[1]["message"], "Response");
     assert_eq!(frames[0]["signals"][0]["raw_text"], "2");
     assert_eq!(frames[1]["signals"][0]["raw_text"], "4");
-    let transaction = rows
-        .iter()
-        .find(|r| r["kind"] == "kwp_transaction")
-        .unwrap();
+    let payloads: Vec<_> = rows.iter().filter(|r| r["kind"] == "payload").collect();
+    assert_eq!(payloads.len(), 2);
+    assert_eq!(payloads[0]["data_hex"], "1A90");
+    assert_eq!(payloads[1]["data_hex"], "5A901234");
     assert_eq!(
-        transaction["request"]["first_location"],
+        payloads[0]["first_location"],
         frames[0]["record"]["location"]
     );
     assert_eq!(
-        transaction["response"]["first_location"],
+        payloads[1]["first_location"],
         frames[1]["record"]["location"]
     );
     assert!(rows
         .iter()
-        .all(|r| r["timeline_key"] == transaction["timeline_key"]));
+        .all(|r| r["timeline_key"] == payloads[0]["timeline_key"]));
+    assert!(!rows.iter().any(|r| r["kind"] == "kwp_transaction"));
     let report: Value =
         serde_json::from_slice(&fs::read(dir.path().join("report.json")).unwrap()).unwrap();
-    assert_eq!(report["output_rows"], 5);
+    assert_eq!(report["output_rows"], 4);
     assert_eq!(report["dbc_counts"]["decoded"], 2);
-    assert_eq!(report["kwp_counts"]["positive"], 1);
+    assert_eq!(report["kwp_counts"], json!({}));
     assert!(report["dbc_engine_revision"].is_string());
     let missing = run(dir.path(), &["--dbc", "2=network.dbc"]);
     assert_eq!(missing.status.code(), Some(3));

@@ -1,7 +1,9 @@
+#[cfg(feature = "cdd")]
+use canlog::uds::Status;
 use canlog::{
     core::Location,
     isotp::{Config as Transport, Direction, Event, FlowObservation},
-    uds::{Config, Matcher, Status},
+    uds::{Config, Matcher},
 };
 use serde_json::{json, Value};
 use std::{fs, process::Command};
@@ -48,141 +50,187 @@ fn packet(direction: Direction, time: i64, bytes: &[u8]) -> Event {
         capture_gaps_before: 0,
     }
 }
-fn request(m: &mut Matcher, time: i64, bytes: &[u8]) {
-    assert!(m
-        .consume(&packet(Direction::Request, time, bytes))
-        .unwrap()
-        .is_empty());
-}
 #[test]
-fn kwp_keeps_full_mode_bytes_and_uses_its_own_echo_profile() {
-    for (req, resp) in [
-        (vec![0x10, 0x81], vec![0x50, 0x81]),
-        (vec![0x10, 0], vec![0x50, 0]),
-        (vec![0x11, 0], vec![0x51, 0, 0]),
-        (vec![0x14, 0xff, 0], vec![0x54, 0xff, 0]),
-        (vec![0x18, 2, 0xff, 0], vec![0x58, 1, 0x90, 2, 0x99]),
-        (vec![0x1a, 0x90], vec![0x5a, 0x90, 1]),
-        (vec![0x20], vec![0x60]),
-        (vec![0x21, 0xa0], vec![0x61, 0xa0, 1]),
-        (vec![0x3b, 0xa0, 1], vec![0x7b, 0xa0]),
-        (vec![0x3e, 1], vec![0x7e]),
+fn without_cdd_does_not_interpret_or_reserve_raw_kwp_payloads() {
+    let mut m = matcher();
+    for (direction, data) in [
+        (Direction::Request, vec![0x82, 0x90]),
+        (Direction::Response, vec![0xc2, 0x90, 1]),
     ] {
-        let mut m = matcher();
-        request(&mut m, 0, &req);
-        let row = m
-            .consume(&packet(Direction::Response, 10, &resp))
-            .unwrap()
-            .remove(0);
-        assert_eq!(row.status, Status::Positive, "{req:?}");
-        assert_eq!(row.kind, "kwp_transaction");
-        assert!(!row.header.as_ref().unwrap().suppress_positive_response);
-        assert_eq!(
-            serde_json::to_value(&row).unwrap()["protocol"],
-            "kwp2000_vector"
-        );
-        if req[0] == 0x10 {
-            assert_eq!(row.header.unwrap().diagnostic_mode, Some(req[1]));
-        }
+        assert!(m.consume(&packet(direction, 0, &data)).unwrap().is_empty());
+        assert_eq!(m.outstanding(), 0);
+        assert_eq!(m.reserved_request_bytes(), 0);
     }
 }
+#[cfg(feature = "cdd")]
+fn native(dir: &TempDir, xml: &str) -> (Matcher, canlog::cdd::Decoder) {
+    let path = dir.path().join("native.cdd");
+    fs::write(&path, xml).unwrap();
+    let mut p = policy();
+    p["routes"][0]["cdd"] = json!({"path":path,"ecu":"E","variant":"V","allow_experimental":true});
+    let config: Config = serde_json::from_value(p).unwrap();
+    let decoder = canlog::cdd::Decoder::load(&config, &Default::default()).unwrap();
+    (
+        Matcher::new(
+            config,
+            &serde_json::from_value::<Transport>(routes()).unwrap(),
+            "timeline",
+        )
+        .unwrap(),
+        decoder,
+    )
+}
+#[cfg(feature = "cdd")]
+fn consume(
+    m: &mut Matcher,
+    d: &canlog::cdd::Decoder,
+    direction: Direction,
+    time: i64,
+    bytes: &[u8],
+) -> Vec<canlog::uds::Observation> {
+    m.consume_with_cdd(&packet(direction, time, bytes), Some(d))
+        .unwrap()
+}
+#[cfg(feature = "cdd")]
+const NATIVE: &str = include_str!("fixtures/kwp-native.cdd");
+#[cfg(feature = "cdd")]
 #[test]
-fn wrong_local_id_group_or_mode_never_matches() {
-    for (req, resp) in [
-        (vec![0x10, 0x81], vec![0x50, 1]),
-        (vec![0x11, 0], vec![0x51, 1]),
-        (vec![0x14, 0xff, 0], vec![0x54, 0, 0]),
-        (vec![0x1a, 0x90], vec![0x5a, 0x92, 1]),
-        (vec![0x21, 0xa0], vec![0x61, 0xa1, 1]),
-        (vec![0x3b, 0xa0, 1], vec![0x7b, 0xa1]),
+fn cdd_decides_service_identity_including_sids_outside_the_removed_profile() {
+    for (xml, sid, response_sid) in [
+        (NATIVE.to_owned(), 0x1a, 0x5a),
+        (
+            NATIVE
+                .replace("spec='sid' bl='8' v='26'", "spec='sid' bl='8' v='130'")
+                .replace("spec='sid' bl='8' v='90'", "spec='sid' bl='8' v='194'"),
+            0x82,
+            0xc2,
+        ),
     ] {
-        let mut m = matcher();
-        request(&mut m, 0, &req);
+        let dir = TempDir::new().unwrap();
+        let (mut m, d) = native(&dir, &xml);
+        assert!(consume(&mut m, &d, Direction::Request, 0, &[sid, 0x90]).is_empty());
+        let row = consume(
+            &mut m,
+            &d,
+            Direction::Response,
+            10,
+            &[response_sid, 0x90, 0x12, 0x34],
+        )
+        .remove(0);
+        assert_eq!(row.status, Status::Positive);
+        assert_eq!(row.header.as_ref().unwrap().service_id, sid);
+        assert!(row.header.unwrap().service_key.is_some());
+        let decoded = row.cdd.unwrap();
+        assert_eq!(decoded.status, "decoded");
         assert_eq!(
-            m.consume(&packet(Direction::Response, 10, &resp)).unwrap()[0].status,
+            decoded.response.as_ref().unwrap()["provenance"]["protocol"],
+            "kwp2000"
+        );
+        assert_eq!(
+            decoded.response.unwrap()["fields"][1]["raw"]["value"],
+            "4660"
+        );
+        assert_eq!(m.outstanding(), 0);
+        assert_eq!(m.reserved_request_bytes(), 0);
+    }
+}
+#[cfg(feature = "cdd")]
+#[test]
+fn undefined_requests_and_invalid_echo_or_length_never_use_fallback_rules() {
+    let dir = TempDir::new().unwrap();
+    let (mut m, d) = native(&dir, NATIVE);
+    let row = consume(&mut m, &d, Direction::Request, 0, &[0x10, 0]).remove(0);
+    assert_eq!(row.status, Status::Unsupported);
+    assert_eq!(row.cdd.unwrap().status, "no_match");
+    consume(&mut m, &d, Direction::Request, 1, &[0x1a, 0x90]);
+    for data in [
+        vec![0x5a, 0x92, 0x12, 0x34],
+        vec![0x5a, 0x90, 0x12],
+        vec![0x5a, 0x90, 0x12, 0x34, 0],
+    ] {
+        assert_eq!(
+            consume(&mut m, &d, Direction::Response, 10, &data)[0].status,
             Status::Orphan
         );
         assert_eq!(m.outstanding(), 1);
     }
-}
-#[test]
-fn response_required_and_no_response_modes_are_distinct_from_uds_suppress_bit() {
-    let mut m = matcher();
-    request(&mut m, 0, &[0x3e, 1]);
-    assert_eq!(m.advance(51, &[])[0].status, Status::NoResponseObserved);
-    let mut m = matcher();
-    request(&mut m, 0, &[0x3e, 2]);
-    assert_eq!(m.advance(51, &[])[0].status, Status::SuppressedExpected);
-    let mut m = matcher();
-    request(&mut m, 0, &[0x3e, 2]);
     assert_eq!(m.eof(20)[0].status, Status::Incomplete);
-    let mut m = matcher();
-    let row = m
-        .consume(&packet(Direction::Request, 0, &[0x3e, 0x81]))
-        .unwrap()
-        .remove(0);
-    assert_eq!(row.status, Status::Unsupported);
-    assert_eq!(row.kind, "kwp_issue");
 }
+#[cfg(feature = "cdd")]
 #[test]
-fn pending_negative_and_dtc_without_echo_need_unique_context() {
-    let mut m = matcher();
-    request(&mut m, 0, &[0x1a, 0x90]);
-    let pending = m
-        .consume(&packet(Direction::Response, 10, &[0x7f, 0x1a, 0x78]))
-        .unwrap()
-        .remove(0);
-    assert_eq!(pending.kind, "kwp_pending");
-    assert_eq!(pending.status, Status::Pending);
-    assert_eq!(
-        m.consume(&packet(Direction::Response, 80, &[0x5a, 0x90, 1]))
-            .unwrap()[0]
-            .status,
-        Status::Positive
-    );
-    for response in [vec![0x7f, 0x1a, 0x31], vec![0x7f, 0x1a, 0x78]] {
-        let mut m = matcher();
-        request(&mut m, 0, &[0x1a, 0x90]);
-        request(&mut m, 1, &[0x1a, 0x92]);
-        let rows = m
-            .consume(&packet(Direction::Response, 10, &response))
-            .unwrap();
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|r| r.status == Status::Ambiguous));
-    }
-    let mut m = matcher();
-    request(&mut m, 0, &[0x18, 2, 0xff, 0]);
-    request(&mut m, 1, &[0x18, 3, 0xff, 0]);
-    assert!(m
-        .consume(&packet(Direction::Response, 10, &[0x58, 0]))
-        .unwrap()
-        .iter()
-        .all(|r| r.status == Status::Ambiguous));
-}
-#[test]
-fn malformed_dtc_counts_and_uds_service_headers_remain_visible() {
-    let mut m = matcher();
-    request(&mut m, 0, &[0x18, 2, 0xff, 0]);
-    for bytes in [
-        vec![0x58, 2, 0x90, 2, 0x99],
-        vec![0x7e, 1],
-        vec![0x50, 0x81, 0, 50, 1, 0xf4],
-        vec![0x54],
-    ] {
-        assert_eq!(
-            m.consume(&packet(Direction::Response, 10, &bytes)).unwrap()[0].status,
-            Status::Malformed
-        );
-    }
-    assert_eq!(
-        m.consume(&packet(Direction::Request, 11, &[0x22, 0xf1, 0x90]))
-            .unwrap()
-            .last()
-            .unwrap()
-            .status,
-        Status::Unsupported
-    );
+fn native_negative_pending_extends_deadline_and_preserves_nrc_context() {
+    let dir = TempDir::new().unwrap();
+    let (mut m, d) = native(&dir, NATIVE);
+    consume(&mut m, &d, Direction::Request, 0, &[0x1a, 0x90]);
+    let row = consume(&mut m, &d, Direction::Response, 10, &[0x7f, 0x1a, 0x78]).remove(0);
+    assert_eq!(row.status, Status::Pending);
+    assert_eq!(row.nrc, Some(0x78));
+    assert_eq!(row.p2_deadline_ns, Some(110));
+    assert_eq!(row.cdd.unwrap().status, "decoded");
+    assert!(m.advance(60, &[]).is_empty());
+    let row = consume(&mut m, &d, Direction::Response, 80, &[0x7f, 0x1a, 0x31]).remove(0);
+    assert_eq!(row.status, Status::Negative);
+    assert_eq!(row.nrc, Some(0x31));
+    assert_eq!(row.pending_count, 1);
     assert_eq!(m.outstanding(), 0);
+}
+#[cfg(feature = "cdd")]
+#[test]
+fn native_matching_does_not_assign_ambiguous_negative_or_duplicate_requests_fifo() {
+    for response in [
+        vec![0x7f, 0x1a, 0x31],
+        vec![0x7f, 0x1a, 0x78],
+        vec![0x5a, 0x90, 0x12, 0x34],
+    ] {
+        let dir = TempDir::new().unwrap();
+        let (mut m, d) = native(&dir, NATIVE);
+        consume(&mut m, &d, Direction::Request, 0, &[0x1a, 0x90]);
+        consume(&mut m, &d, Direction::Request, 1, &[0x1a, 0x90]);
+        let rows = consume(&mut m, &d, Direction::Response, 10, &response);
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .all(|r| r.status == Status::Ambiguous && r.candidate_transaction_keys.len() == 2));
+        assert_eq!(m.outstanding(), 0);
+        assert_eq!(m.reserved_request_bytes(), 0);
+    }
+    let dir = TempDir::new().unwrap();
+    let (mut m, d) = native(&dir, NATIVE);
+    consume(&mut m, &d, Direction::Request, 0, &[0x1a, 0x90]);
+    consume(&mut m, &d, Direction::Request, 1, &[0x1a, 0x92]);
+    let row = consume(
+        &mut m,
+        &d,
+        Direction::Response,
+        10,
+        &[0x5a, 0x92, 0x12, 0x34],
+    )
+    .remove(0);
+    assert_eq!(row.status, Status::Positive);
+    assert_eq!(row.request.unwrap().data_hex, "1A92");
+    assert_eq!(m.outstanding(), 1);
+}
+#[cfg(feature = "cdd")]
+#[test]
+fn unsupported_native_response_layout_is_unverified_and_timeout_stays_bounded() {
+    let dir = TempDir::new().unwrap();
+    let (mut m, d) = native(&dir, &NATIVE.replace("dtref='_u16'", "dtref='_missing'"));
+    consume(&mut m, &d, Direction::Request, 0, &[0x1a, 0x90]);
+    let row = consume(
+        &mut m,
+        &d,
+        Direction::Response,
+        10,
+        &[0x5a, 0x90, 0x12, 0x34],
+    )
+    .remove(0);
+    assert_eq!(row.status, Status::Ambiguous);
+    assert_eq!(row.cdd.unwrap().status, "unverified");
+    let dir = TempDir::new().unwrap();
+    let (mut m, d) = native(&dir, NATIVE);
+    consume(&mut m, &d, Direction::Request, 0, &[0x1a, 0x90]);
+    assert_eq!(m.advance(51, &[])[0].status, Status::NoResponseObserved);
+    assert_eq!(m.reserved_request_bytes(), 0);
 }
 #[test]
 fn cli_separates_protocol_policy_and_report_counts() {
@@ -219,14 +267,12 @@ fn cli_separates_protocol_policy_and_report_counts() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    assert_eq!(
-        rows.iter()
-            .filter(|r| r["kind"] == "kwp_transaction")
-            .count(),
-        1
-    );
+    assert!(rows.iter().all(|r| r["kind"] == "payload"));
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["data_hex"], "1081");
+    assert_eq!(rows[1]["data_hex"], "5081");
     let metadata: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
-    assert_eq!(metadata["kwp_counts"]["positive"], 1);
+    assert_eq!(metadata["kwp_counts"], json!({}));
     assert!(metadata.get("uds_counts").is_none());
     assert!(metadata.get("kwp_policy_sha256").is_some());
     let output = Command::new(env!("CARGO_BIN_EXE_canlog"))

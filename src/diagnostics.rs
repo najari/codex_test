@@ -353,7 +353,7 @@ fn emit(
     for event in events {
         let observations = matcher
             .as_mut()
-            .map(|matcher| matcher.consume(&event))
+            .map(|matcher| matcher.consume_with_cdd(&event, report.cdd_decoder.as_ref()))
             .transpose()?
             .unwrap_or_default();
         let key = format!("{}:{}", event.kind, event.status);
@@ -529,7 +529,7 @@ fn analyze_inner(
         schema_version: 1,
         analyzer: match expected_protocol {
             Some(crate::uds::Protocol::Uds2013) => "canlog-uds2013-physical-v1",
-            Some(crate::uds::Protocol::Kwp2000Vector) => "canlog-kwp2000-vector-physical-v1",
+            Some(crate::uds::Protocol::Kwp2000Vector) => "canlog-kwp2000-cdd-physical-v2",
             None => ANALYZER,
         }
         .into(),

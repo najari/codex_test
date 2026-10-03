@@ -1,4 +1,4 @@
-//! Bounded passive transaction matching with explicit UDS/KWP header profiles.
+//! Bounded passive timing and transaction state; KWP interpretation belongs to cdd_engine.
 use crate::{
     core::Location,
     isotp::{Config as TransportConfig, Direction, Event, ResponseStart},
@@ -166,13 +166,7 @@ pub struct RequestHeader {
     pub block_sequence_counter: Option<u8>,
     pub suppress_positive_response: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostic_mode: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reset_mode: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_identifier: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dtc_group: Option<u16>,
+    pub service_key: Option<String>,
 }
 fn supported(sid: u8) -> bool {
     matches!(
@@ -498,6 +492,7 @@ struct Transaction {
     protocol: Protocol,
     binding: usize,
     header: RequestHeader,
+    native_request: Option<crate::cdd::NativeRequest>,
     request: Payload,
     byte_count: usize,
     deadline: i64,
@@ -552,7 +547,7 @@ impl Transaction {
             p2_deadline_ns: Some(self.deadline),
             total_deadline_ns: Some(self.total_deadline),
             data_semantics: "opaque_no_cdd",
-            cdd: None,
+            cdd: self.native_request.as_ref().map(|r| r.decoded.clone()),
         }
     }
 }
@@ -633,6 +628,13 @@ impl Matcher {
     }
     /// Completed payloads alone enter the explicit protocol classifier; transport gaps close unresolved context.
     pub fn consume(&mut self, event: &Event) -> Result<Vec<Observation>> {
+        self.consume_with_cdd(event, None)
+    }
+    pub fn consume_with_cdd(
+        &mut self,
+        event: &Event,
+        decoder: Option<&crate::cdd::Decoder>,
+    ) -> Result<Vec<Observation>> {
         let Some(route) = event.route.as_deref() else {
             return Ok(vec![]);
         };
@@ -640,6 +642,11 @@ impl Matcher {
             return Ok(vec![]);
         };
         let protocol = self.config.routes[binding].protocol;
+        // The ISO-TP pipeline already emits raw payloads. Without a definition there
+        // is no KWP service identity to interpret or pair, so leave those rows raw.
+        if protocol == Protocol::Kwp2000Vector && !decoder.is_some_and(|d| d.has_route(route)) {
+            return Ok(vec![]);
+        }
         if event.kind == "protocol_issue" || (event.kind == "payload" && event.status != "complete")
         {
             return self.interrupt_route(
@@ -658,10 +665,45 @@ impl Matcher {
             event.declared_length == Some(data.len()),
             "completed transport declared length mismatch"
         );
+        let native = if protocol == Protocol::Kwp2000Vector {
+            Some(decoder.ok_or_else(|| {
+                anyhow::anyhow!("KWP2000 requires a CDD engine and route assignment")
+            })?)
+        } else {
+            None
+        };
         if event.direction == Some(Direction::Request) {
+            let mut native_request = None;
+            if let Some(decoder) = native {
+                let (request, decoded) = decoder.kwp_request(route, &data)?;
+                let Some(request) = request else {
+                    let mut result = self.interrupt_route(
+                        route,
+                        "unverified_request_context",
+                        None,
+                        payload.last_timestamp_ns,
+                    )?;
+                    let status = if decoded.status == "ambiguous" {
+                        Status::Ambiguous
+                    } else {
+                        Status::Unsupported
+                    };
+                    let mut issue = Observation::issue(
+                        protocol,
+                        route,
+                        event,
+                        status,
+                        "cdd_request_not_uniquely_decoded",
+                    )?;
+                    issue.cdd = Some(decoded);
+                    result.push(issue);
+                    return Ok(result);
+                };
+                native_request = Some(request);
+            }
             let classified = match protocol {
                 Protocol::Uds2013 => request_header(&data),
-                Protocol::Kwp2000Vector => crate::kwp::request_header(&data),
+                Protocol::Kwp2000Vector => Ok(native_request.as_ref().unwrap().header.clone()),
             };
             let header = match classified {
                 Ok(header) => header,
@@ -728,6 +770,7 @@ impl Matcher {
                 protocol,
                 binding,
                 header,
+                native_request,
                 request: payload,
                 byte_count: data.len(),
                 deadline,
@@ -738,8 +781,8 @@ impl Matcher {
             return Ok(vec![]);
         }
         let classified = match protocol {
-            Protocol::Uds2013 => response_header(&data),
-            Protocol::Kwp2000Vector => crate::kwp::response_header(&data),
+            Protocol::Uds2013 => response_header(&data).map(Some),
+            Protocol::Kwp2000Vector => Ok(None),
         };
         let response = match classified {
             Ok(header) => header,
@@ -757,33 +800,38 @@ impl Matcher {
                 )?])
             }
         };
-        let candidates: Vec<(usize, Match)> = self
-            .open
-            .iter()
-            .enumerate()
-            .filter_map(|(index, t)| {
-                if t.binding != binding
-                    || payload.first_timestamp_ns < t.request.last_timestamp_ns
-                    || (payload.first_timestamp_ns == t.request.last_timestamp_ns
-                        && payload.first_location.ordinal <= t.request.last_location.ordinal)
-                    || payload.first_timestamp_ns > t.deadline.min(t.total_deadline)
-                    || payload.last_timestamp_ns > t.total_deadline
-                {
-                    return None;
-                }
-                let result = match protocol {
-                    Protocol::Uds2013 => matches(&t.header, &response, &data),
-                    Protocol::Kwp2000Vector => {
-                        if crate::kwp::matches(&t.header, &response, &data) {
-                            Match::Yes
-                        } else {
-                            Match::No
-                        }
+        let mut candidates = vec![];
+        for (index, t) in self.open.iter().enumerate() {
+            if t.binding != binding
+                || payload.first_timestamp_ns < t.request.last_timestamp_ns
+                || (payload.first_timestamp_ns == t.request.last_timestamp_ns
+                    && payload.first_location.ordinal <= t.request.last_location.ordinal)
+                || payload.first_timestamp_ns > t.deadline.min(t.total_deadline)
+                || payload.last_timestamp_ns > t.total_deadline
+            {
+                continue;
+            }
+            let (result, decoded, nrc) = if let Some(decoder) = native {
+                match decoder.kwp_response(route, t.native_request.as_ref().unwrap(), &data)? {
+                    crate::cdd::NativeResponse::NoMatch => (Match::No, None, None),
+                    crate::cdd::NativeResponse::Unverified(decoded) => {
+                        (Match::Unverified, Some(decoded), None)
                     }
-                };
-                (result != Match::No).then_some((index, result))
-            })
-            .collect();
+                    crate::cdd::NativeResponse::Matched { nrc, decoded } => {
+                        (Match::Yes, Some(decoded), nrc)
+                    }
+                }
+            } else {
+                (
+                    matches(&t.header, response.as_ref().unwrap(), &data),
+                    None,
+                    response.as_ref().unwrap().nrc,
+                )
+            };
+            if result != Match::No {
+                candidates.push((index, result, decoded, nrc));
+            }
+        }
         if candidates.is_empty() {
             let mut issue = Observation::issue(
                 protocol,
@@ -792,21 +840,26 @@ impl Matcher {
                 Status::Orphan,
                 "no_unique_timely_request_context",
             )?;
-            issue.nrc = response.nrc;
+            issue.nrc = response.as_ref().and_then(|r| r.nrc);
+            if let Some(decoder) = native {
+                issue.cdd = Some(decoder.kwp_response_identification(route, &data)?);
+            }
             return Ok(vec![issue]);
         }
         if candidates.len() > 1 || candidates[0].1 == Match::Unverified {
             let keys: Vec<String> = candidates
                 .iter()
-                .map(|(index, _)| self.open[*index].key.clone())
+                .map(|(index, ..)| self.open[*index].key.clone())
                 .collect();
             let reason = if candidates.len() > 1 {
                 "multiple_request_candidates"
+            } else if native.is_some() {
+                "cdd_response_not_fully_decoded"
             } else {
                 "multi_did_response_requires_definition"
             };
             let mut result = vec![];
-            for (index, _) in candidates.into_iter().rev() {
+            for (index, _, decoded, nrc) in candidates.into_iter().rev() {
                 let mut closed = self.close(
                     index,
                     Status::Ambiguous,
@@ -815,14 +868,17 @@ impl Matcher {
                     payload.last_timestamp_ns,
                 );
                 closed.candidate_transaction_keys = keys.clone();
-                closed.nrc = response.nrc;
+                closed.nrc = nrc;
+                if decoded.is_some() {
+                    closed.cdd = decoded;
+                }
                 result.push(closed);
             }
             result.reverse();
             return Ok(result);
         }
-        let index = candidates[0].0;
-        if response.nrc == Some(0x78) {
+        let (index, _, decoded, nrc) = candidates.remove(0);
+        if nrc == Some(0x78) {
             let transaction = &mut self.open[index];
             transaction.pending_count += 1;
             if transaction.pending.len() < self.config.max_pending_examples {
@@ -837,6 +893,10 @@ impl Matcher {
                     payload.last_timestamp_ns,
                 );
                 closed.nrc = Some(0x78);
+                if decoded.is_some() {
+                    closed.cdd = decoded;
+                    closed.data_semantics = "cdd_fields_available";
+                }
                 return Ok(vec![closed]);
             }
             transaction.deadline = payload
@@ -852,13 +912,17 @@ impl Matcher {
                 payload.last_timestamp_ns,
             );
             observed.nrc = Some(0x78);
+            if decoded.is_some() {
+                observed.cdd = decoded;
+                observed.data_semantics = "cdd_fields_available";
+            }
             return Ok(vec![observed]);
         }
         let transaction = self.open.remove(index);
         self.reserved -= transaction.byte_count;
         let mut observed = transaction.observation(
             route,
-            if response.nrc.is_some() {
+            if nrc.is_some() {
                 Status::Negative
             } else {
                 Status::Positive
@@ -867,7 +931,11 @@ impl Matcher {
             Some(payload.clone()),
             payload.last_timestamp_ns,
         );
-        observed.nrc = response.nrc;
+        observed.nrc = nrc;
+        if decoded.is_some() {
+            observed.cdd = decoded;
+            observed.data_semantics = "cdd_fields_available";
+        }
         Ok(vec![observed])
     }
     /// A timely unresolved ISO-TP response start holds P2/P2*, bounded by total duration.

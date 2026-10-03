@@ -52,9 +52,9 @@ def main():
         configured = (args.policy.parent / assignment['cdd']['path']).resolve()
         original(configured)
 
-    cases = [('ComfortDiagData', 1, 'comfort-demo', 'Comfort', 'CANSystemDoor', 9),
-             ('EngineDiagData', 2, 'engine-demo', 'PowerTrain', 'CANSystem', 7),
-             ('DiagDataA', 1, 'comfort-demo', 'Comfort', 'CANSystemDoor', 8)]
+    cases = [('ComfortDiagData', 1, 'comfort-demo', 'Comfort', 'CANSystemDoor', 7),
+             ('EngineDiagData', 2, 'engine-demo', 'PowerTrain', 'CANSystem', 5),
+             ('DiagDataA', 1, 'comfort-demo', 'Comfort', 'CANSystemDoor', 7)]
     for name, channel, route_name, dbc_name, cdd_name, positive_count in cases:
         source = args.samples / f'asc/Logging/{name}.asc'
         dbc = args.samples / f'dbc/CANdb/{dbc_name}.dbc'
@@ -87,7 +87,15 @@ def main():
         if name == 'EngineDiagData':
             missing = collections.Counter(r['status'] for r in transactions if r['request']['data_hex'] == '3E01')
             assert missing == {'no_response_observed': 17, 'incomplete': 1}, missing
-            assert next(r for r in positives if r['request']['data_hex'] == '1081')['header']['diagnostic_mode'] == 0x81
+            assert next(r for r in positives if r['request']['data_hex'] == '1081')['header']['service_id'] == 0x10
+
+        # Undeclared session/reset messages stay visible, without the old header fallback.
+        issues = [r for r in rows if r.get('kind') == 'kwp_issue']
+        if name in ('ComfortDiagData', 'DiagDataA'):
+            expected = {'unsupported': 2, 'orphan': 2} if name == 'ComfortDiagData' else {'unsupported': 1, 'orphan': 1}
+            assert dict(collections.Counter(r['status'] for r in issues)) == expected
+            assert all(r['cdd']['status'] == 'no_match' for r in issues)
+        assert all(r['header']['service_key'] for r in transactions)
 
         definitions = cantools.database.load_file(str(cdd), database_format='cdd')
         tree = ET.parse(cdd).getroot()
@@ -102,7 +110,8 @@ def main():
                 continue
             decoded = row['cdd']
             assert decoded['status'] == 'decoded', (name, request.hex(), decoded)
-            assert decoded['response']['provenance']['profile_id'] == 'kwp-candela-2x'
+            assert decoded['response']['provenance']['profile_id'] == 'uds-candela-2x'
+            assert decoded['response']['provenance']['protocol'] == 'kwp2000'
             did = definitions.get_did_by_identifier(request[1])
             values = did.decode(bytes.fromhex(row['response']['data_hex'])[2:])
             native = {f['key'].split('/')[-1]: f['raw']['value'] for f in decoded['response']['fields']}
@@ -114,9 +123,9 @@ def main():
                 assert native[field] == str(value), (name, field, native[field], value)
                 field_checks.append({'field': field, 'expected': str(value), 'actual': native[field]})
         if name == 'EngineDiagData':
-            dtc = [r for r in positives if r['request']['data_hex'] == '1802FF00']
-            assert len(dtc) == 2 and all(r['cdd']['status'] == 'decode_error' for r in dtc), dtc
-            assert all('proxy' in r['cdd']['error']['message'] for r in dtc)
+            dtc = [r for r in transactions if r['request']['data_hex'] == '1802FF00']
+            assert len(dtc) == 2 and all(r['status'] == 'ambiguous' and r['cdd']['status'] == 'unverified' for r in dtc), dtc
+            assert all(r['reason'] == 'cdd_response_not_fully_decoded' for r in dtc)
 
         dbc_output = args.artifacts / f'{name}.dbc.jsonl'
         run(['decode', source, '--dbc', f'{channel}={dbc}', '-o', dbc_output], 0)

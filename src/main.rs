@@ -20,7 +20,7 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// Analyze the explicit Vector KWP2000-over-ISO-TP profile with optional CDD.
+    /// Output KWP ISO-TP raw payloads; use CDD engine interpretation when assigned.
     Kwp {
         #[command(flatten)]
         args: InputArgs,

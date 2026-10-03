@@ -33,3 +33,5 @@ $s = '.\can_example\vector_samples\2026-10-03\groups\CANoe_13.0.172\CAN\CANSyste
 콘솔 재생은 데이터 파일이 없으므로 `published=false`가 정상이다. `scan_complete=true`는 로그를 끝까지 처리했음을 뜻한다. JSONL 저장 모드는 정상 완료 시 `published=true`다.
 
 `--control-stdin`으로 `pause`, `resume`, `stop`을 입력할 수 있으며 Ctrl+C도 지원한다. 취소·정의 파일 변경·파싱 실패 시 임시 JSONL은 게시하지 않는다. 진단 replay는 현재 전체 로그 **1회**만 지원한다. 필터, 반복/gap, CSV·ASC·BLF 출력은 거부한다. 일반 raw/DBC replay의 기존 필터·반복 기능은 계속 사용할 수 있다. 여러 CDD는 기존 policy assignments를 사용하고 프로토콜은 `--protocol uds2013` 또는 `--protocol kwp2000-vector`로 명시한다.
+
+CDD 옵션을 생략하면 DBC frame과 ISO-TP raw payload를 시간에 맞춰 출력한다. CDD를 지정한 경로에서만 native KWP transaction과 필드를 해석한다.

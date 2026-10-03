@@ -33,7 +33,7 @@ Windows에는 Rust MSVC toolchain 1.88 이상, Visual Studio C++ Build Tools, Wi
 | `replay INPUT --dbc CHANNEL=PATH` | 재생 시간에 맞춰 DBC 신호 출력; JSONL 또는 `--sink console` |
 | `replay INPUT --routes JSON --policy JSON --protocol kwp2000-vector` | DBC·CDD를 함께 해석하는 물리 진단 replay; [실행 예제](examples/asc-dbc-cdd/replay.md) |
 | `uds INPUT --routes ROUTES --policy POLICY` | 물리 ISO-TP 기반 UDS 요청·응답·pending과 선택적 CDD 해석 |
-| `kwp INPUT --routes ROUTES --policy POLICY` | 기존 Vector KWP2000 물리 요청·응답과 CDD 식별 필드 해석 |
+| `kwp INPUT --routes ROUTES --policy POLICY` | KWP raw payload 출력; CDD 지정 시 엔진 기반 요청·응답·필드 해석 |
 | `cdd-info INPUT --allow-experimental` | CDD ECU·variant·서비스·DID·diagnostics 검사; `-Cdd` 빌드 필요 |
 | `index build INPUT -o INDEX` / `index info INDEX` | 원본 payload를 복제하지 않는 SQLite 검색 인덱스 작성/조회 |
 | `index query INPUT --index INDEX` | 원본을 확인하고 선택 chunk부터 읽는 JSONL 검색 |

@@ -62,7 +62,7 @@ EOF만으로 ECU timeout이나 suppress 성공을 단정하지 않는다. `--uns
 
 ## CDD facade와 provenance
 
-선택적 Cargo feature `cdd`는 [cdd-rust-engine](https://github.com/najari/cdd-rust-engine)의 commit `9207dfc845d5d256eb479073824bad234b27f79b`를 Git dependency로 고정한다. DBC 엔진과 같은 방식으로 빌드 시 Cargo가 cache/fetch하고 실제 Rust facade·codec을 컴파일한다. canlog에 CDD XML parser의 일부를 복제하지 않는다. 생성한 exe는 실행 시 GitHub나 Python에 접속하지 않는다. 원본 CDD는 runtime 입력 파일이다.
+선택적 Cargo feature `cdd`는 [cdd-rust-engine](https://github.com/najari/cdd-rust-engine)의 commit `ecd4a6a42792636a8386439653950e8693818d02`를 Git dependency로 고정한다. DBC 엔진과 같은 방식으로 빌드 시 Cargo가 cache/fetch하고 실제 Rust facade·codec을 컴파일한다. canlog에 CDD XML parser의 일부를 복제하지 않는다. 생성한 exe는 실행 시 GitHub나 Python에 접속하지 않는다. 원본 CDD는 runtime 입력 파일이다.
 
 해당 엔진의 profile maturity는 **experimental**이다. route의 `cdd.allow_experimental: true` 또는 `cdd-info --allow-experimental`을 명시해야 한다. `cdd-info`는 Unknown 프로토콜도 검사하지만 UDS route 배정은 모델이 Uds일 때만 허용한다.
 
