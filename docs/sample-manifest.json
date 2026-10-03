@@ -1,0 +1,696 @@
+{
+  "schema_version": 1,
+  "verified_date": "2026-10-03",
+  "samples": [
+    {
+      "path": "can_example/asf/Action.asc",
+      "bytes": 1434,
+      "sha256": "2f36645ac817b28cb612285128f51a461c5753c291f93df33aa55f5fdbb0ce2b",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 28,
+      "issue_counts": {
+        "UnsupportedRecord": 28
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:source-metadata": 1,
+        "unsupported-record": 28
+      }
+    },
+    {
+      "path": "can_example/asf/can1.asc",
+      "bytes": 151,
+      "sha256": "9e8f1772559663b24ec8d7bea79acdd9763adee969266da617636f573320bedd",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "complete",
+      "frames": 0,
+      "issues": 0,
+      "issue_counts": {},
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {}
+    },
+    {
+      "path": "can_example/asf/can2.asc",
+      "bytes": 79421,
+      "sha256": "95e8fd4edb13455af5d892d4e5bf1978ac426b8ba45be1a50f8624abb08e1402",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 1776,
+      "issue_counts": {
+        "UnresolvedId": 443,
+        "UnsupportedRecord": 1333
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 1776
+      }
+    },
+    {
+      "path": "can_example/asf/CANOE.ASC",
+      "bytes": 50470,
+      "sha256": "82f1f8f34501b5835d75f95deb6cf84741f7cf714207e4e56dcb6bd84299d8e1",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 146,
+      "issues": 636,
+      "issue_counts": {
+        "UnsupportedRecord": 636
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:format-metadata": 1,
+        "unsupported-record": 636
+      }
+    },
+    {
+      "path": "can_example/asf/ComfortDiagData.asc",
+      "bytes": 1389,
+      "sha256": "c44cb9f6b19cb9b892c94cfeaabbe0fb4ac3da0aa4623f79ea54a1161adef766",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "complete",
+      "frames": 20,
+      "issues": 0,
+      "issue_counts": {},
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:source-metadata": 1
+      }
+    },
+    {
+      "path": "can_example/asf/Demo.asc",
+      "bytes": 233,
+      "sha256": "b52173339dc3a512ad1ab66d43216523e1d43c69875a28dab14f800856f2f442",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 3,
+      "issue_counts": {
+        "UnsupportedRecord": 3
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 3
+      }
+    },
+    {
+      "path": "can_example/asf/Demo1.asc",
+      "bytes": 8354,
+      "sha256": "0e1bd5ab85c9d3d4f66a338d9fa804ef20af478b2e0e2b539d1eb03f451f5f39",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 129,
+      "issue_counts": {
+        "UnsupportedRecord": 129
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 129
+      }
+    },
+    {
+      "path": "can_example/asf/DemoMakro.asc",
+      "bytes": 15425,
+      "sha256": "2a6cdf63456e81851a845d87f9dcc6aadc5d0871b4680c3612c52bbb08696186",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 302,
+      "issue_counts": {
+        "UnsupportedRecord": 302
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:source-metadata": 1,
+        "unsupported-record": 302
+      }
+    },
+    {
+      "path": "can_example/asf/DiagDataA.asc",
+      "bytes": 1259,
+      "sha256": "ea54d22de449b01bb7b55d17296b07bfde6fec7b88ba71c983f143640e31e3a5",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "complete",
+      "frames": 18,
+      "issues": 0,
+      "issue_counts": {},
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:source-metadata": 1
+      }
+    },
+    {
+      "path": "can_example/asf/DoorFL_ReadEcuRelatedInfo.asc",
+      "bytes": 302,
+      "sha256": "5f51b4cfef1c6fafddd5f0790f7300c846cd03a7ecfe647ba7e8c5f5ae147d21",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 5,
+      "issue_counts": {
+        "UnsupportedRecord": 5
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 5
+      }
+    },
+    {
+      "path": "can_example/asf/EasyLog.asc",
+      "bytes": 18238,
+      "sha256": "758d2dacda627ef560f9f6ef9a3ab32b9e49f81008992fcce505b0cb4305c525",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 446,
+      "issue_counts": {
+        "UnsupportedRecord": 446
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 446
+      }
+    },
+    {
+      "path": "can_example/asf/EngineDiagData.asc",
+      "bytes": 2429,
+      "sha256": "315a9c4a26a36a36806b2adf3a983bf4eaa2875deef0849f3a464e81f1a772a8",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "complete",
+      "frames": 36,
+      "issues": 0,
+      "issue_counts": {},
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:source-metadata": 1
+      }
+    },
+    {
+      "path": "can_example/asf/Logging_CAN1.asc",
+      "bytes": 242013,
+      "sha256": "16cdc6dd8d41d8eb49eb4bbbdbb22d26d7625175fecbc8f416e50995bb196a79",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 783,
+      "issues": 2414,
+      "issue_counts": {
+        "UnsupportedRecord": 2414
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:format-metadata": 1,
+        "unsupported-record": 2414
+      }
+    },
+    {
+      "path": "can_example/asf/Logging_CAN2.asc",
+      "bytes": 227820,
+      "sha256": "c3624e2619c6cd2017c2beb1b3d5a18362f52005eba7a1b47c447776e5dd45a7",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 643,
+      "issues": 2399,
+      "issue_counts": {
+        "UnsupportedRecord": 2399
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:format-metadata": 1,
+        "unsupported-record": 2399
+      }
+    },
+    {
+      "path": "can_example/asf/Macro.asc",
+      "bytes": 476,
+      "sha256": "62126479075fe835209d309213cd44f412322f35490936ae956fc0ea7db0b1ef",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 11,
+      "issue_counts": {
+        "UnsupportedRecord": 11
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 11
+      }
+    },
+    {
+      "path": "can_example/asf/Macro1.asc",
+      "bytes": 33310,
+      "sha256": "a1d7beeec60fb3cce4cc8d28ed77d1612b347c0be2fc1b70f5da74a32d08fc1e",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 496,
+      "issue_counts": {
+        "UnsupportedRecord": 496
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 496
+      }
+    },
+    {
+      "path": "can_example/asf/MacroDiagnostics.asc",
+      "bytes": 343,
+      "sha256": "535c818a9e70819b95b13f55b01f6372748bf87f14477ca1b72452107900d01b",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 7,
+      "issue_counts": {
+        "UnsupportedRecord": 7
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 7
+      }
+    },
+    {
+      "path": "can_example/asf/Makro.asc",
+      "bytes": 1135,
+      "sha256": "4b5fac71bbbd25e0d57e851f7e24fd356d4d051557d1b00fd6cc0ee8dbd8a6a8",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 26,
+      "issue_counts": {
+        "UnsupportedRecord": 26
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 26
+      }
+    },
+    {
+      "path": "can_example/asf/MOSTStreamPlayer.asc",
+      "bytes": 195204,
+      "sha256": "9fc5815115767846cdab02e4047ac102e56ebe51f3e27916c679c3c6e6646fdf",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 2016,
+      "issue_counts": {
+        "UnsupportedRecord": 2016
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 2016
+      }
+    },
+    {
+      "path": "can_example/asf/RemoteKey.asc",
+      "bytes": 510,
+      "sha256": "a53bf66e926b34583e5b156f8d9a01e990fb16e54e8fc509df2ca4a59e4b3619",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 8,
+      "issue_counts": {
+        "UnsupportedRecord": 8
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 8
+      }
+    },
+    {
+      "path": "can_example/asf/ReplayEnvSV.asc",
+      "bytes": 2295,
+      "sha256": "634e35823025cc44cc86bdd612ba8cc4b7689eebea1c229d41612c53868c8f13",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 38,
+      "issue_counts": {
+        "UnsupportedRecord": 38
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 38
+      }
+    },
+    {
+      "path": "can_example/blf/A429MainDemoOffline.blf",
+      "bytes": 163708,
+      "sha256": "d2309bdecf7b5ce2af14413c8976954d202cf6e23d75893e1e0935db26e435ce",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 13072,
+      "issue_counts": {
+        "UnsupportedRecord": 13072
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 13072
+      }
+    },
+    {
+      "path": "can_example/blf/ActiveX.blf",
+      "bytes": 5256,
+      "sha256": "b8a9428a8e1c042126cc6d0976d6de876f06c4e9f3381004b69ab937a9196346",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 732,
+      "issues": 72,
+      "issue_counts": {
+        "UnsupportedRecord": 72
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 72
+      }
+    },
+    {
+      "path": "can_example/blf/CANOE.blf",
+      "bytes": 22088,
+      "sha256": "0c864256bf07dea5b62ee328cc3e379e88cbb438f49a27726d3a36497b4aeecc",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 2367,
+      "issues": 281,
+      "issue_counts": {
+        "UnsupportedRecord": 281
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 281
+      }
+    },
+    {
+      "path": "can_example/blf/CANSystem_CAN1.blf",
+      "bytes": 25876,
+      "sha256": "cf389d7d7b75a177d8fec788cddca6dccc321ec99bb5992972953231e58a085a",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 2635,
+      "issues": 482,
+      "issue_counts": {
+        "UnsupportedRecord": 482
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:format-metadata": 1,
+        "unsupported-record": 482
+      }
+    },
+    {
+      "path": "can_example/blf/CANSystem_CAN2.blf",
+      "bytes": 24980,
+      "sha256": "9402dd2b4a7e30f18a5a0ae381e7872b57ed83211d3d09910573533bd9f1fa43",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 2064,
+      "issues": 482,
+      "issue_counts": {
+        "UnsupportedRecord": 482
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:format-metadata": 1,
+        "unsupported-record": 482
+      }
+    },
+    {
+      "path": "can_example/blf/CANWIN.blf",
+      "bytes": 29168,
+      "sha256": "a91d7ddc4a282e801f8d26a7e6e0038ca6dadab2dc1101e2a2bb05499da405d9",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 1267,
+      "issue_counts": {
+        "UnsupportedRecord": 1267
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 1267
+      }
+    },
+    {
+      "path": "can_example/blf/Debug.blf",
+      "bytes": 4812,
+      "sha256": "97244940c2db1ed2f43daa89911fb2bdc815a853bdb93ed394c0cb3efb84171d",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 802,
+      "issues": 30,
+      "issue_counts": {
+        "UnsupportedRecord": 30
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 30
+      }
+    },
+    {
+      "path": "can_example/blf/DemoLog.blf",
+      "bytes": 103470,
+      "sha256": "e8f106a874bd261061d02e7298b32169fa7c441cd0899e3bb26f3dac03089649",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 367,
+      "issues": 6102,
+      "issue_counts": {
+        "UnsupportedRecord": 6102
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 6102
+      }
+    },
+    {
+      "path": "can_example/blf/DemoLog_MOST_only.blf",
+      "bytes": 63216,
+      "sha256": "ae86b015d106a585cc0c920a0fd9199c290d8d2a46bbb29c0a15374f79b3d7fa",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 3925,
+      "issue_counts": {
+        "UnsupportedRecord": 3925
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 3925
+      }
+    },
+    {
+      "path": "can_example/blf/Easy.blf",
+      "bytes": 2844,
+      "sha256": "4cf17dfd76533121e5b1538ce6ab54360a0f627b3222d9867e1976bc6d710145",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 388,
+      "issues": 38,
+      "issue_counts": {
+        "UnsupportedRecord": 38
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 38
+      }
+    },
+    {
+      "path": "can_example/blf/Ethernet.blf",
+      "bytes": 1771184,
+      "sha256": "01e9aeb159b310f7259bc2208cb6e5ba5d4f74d4905c72cb0b6a01bbb368a91c",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 77608,
+      "issue_counts": {
+        "UnsupportedRecord": 77608
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 77608
+      }
+    },
+    {
+      "path": "can_example/blf/FuelSystem_Sensors.blf",
+      "bytes": 16102,
+      "sha256": "454fe0db46022d8a4a9c7fd701de195fff9cdd9609eca384046473ee3a7e66ff",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 1160,
+      "issue_counts": {
+        "UnsupportedRecord": 1160
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 1160
+      }
+    },
+    {
+      "path": "can_example/blf/LINSystem_1.blf",
+      "bytes": 83546,
+      "sha256": "daf9b51740f98fb92c0e182997f54e7794016e72ad7c34ddd727f28eeb8c7eec",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 7330,
+      "issue_counts": {
+        "UnsupportedRecord": 7330
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 7330
+      }
+    },
+    {
+      "path": "can_example/blf/LINSystem_2.blf",
+      "bytes": 70068,
+      "sha256": "a594190991dda1561967f3c4142030d901d7c37fa9f7d9950837cb7e6046f3aa",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 6558,
+      "issue_counts": {
+        "UnsupportedRecord": 6558
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 6558
+      }
+    },
+    {
+      "path": "can_example/blf/Log_001.blf",
+      "bytes": 305170,
+      "sha256": "bc3801112ded9e6811d68a469cfac2cef74acf5d3a8cf370d56277b4f78716fd",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 40206,
+      "issues": 1307,
+      "issue_counts": {
+        "UnsupportedRecord": 1307
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:format-metadata": 1,
+        "unsupported-record": 1307
+      }
+    },
+    {
+      "path": "can_example/blf/Logging.blf",
+      "bytes": 26114,
+      "sha256": "4ea1513c845de5da4d955521ef0e78def77dc873282511f0c5a8ae8249e666b8",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 826,
+      "issues": 2875,
+      "issue_counts": {
+        "CanError": 1700,
+        "UnsupportedRecord": 1175
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 2875
+      }
+    },
+    {
+      "path": "can_example/blf/Logging_CAN2.blf",
+      "bytes": 15972,
+      "sha256": "4e6f1f466fb6ebbd30097e873d1039418a5a325add0948f1b455349c691447d5",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 1581,
+      "issues": 25,
+      "issue_counts": {
+        "UnsupportedRecord": 25
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:format-metadata": 1,
+        "unsupported-record": 25
+      }
+    },
+    {
+      "path": "can_example/blf/SampleLog.blf",
+      "bytes": 5258,
+      "sha256": "f0baee0025416ad73b6597d0081604dfe309816e9e9e763f47fbbc9a6da08701",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 236,
+      "issue_counts": {
+        "UnsupportedRecord": 236
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 236
+      }
+    },
+    {
+      "path": "can_example/blf/Stress.blf",
+      "bytes": 185368,
+      "sha256": "fa6699a7db4a9abd2964db1295a0aeaf326ae2fa7dd6b0180705a0a3f38d90b2",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 18360,
+      "issues": 6682,
+      "issue_counts": {
+        "UnsupportedRecord": 6682
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 6682
+      }
+    },
+    {
+      "path": "can_example/blf/test.blf",
+      "bytes": 15184,
+      "sha256": "6cda9acd98b311e76cc761dcd4faae25a8869f01e678c7ff2667411b0cedf7e3",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 1000,
+      "issues": 668,
+      "issue_counts": {
+        "UnsupportedRecord": 668
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 668
+      }
+    },
+    {
+      "path": "can_example/blf/Truck.blf",
+      "bytes": 342558,
+      "sha256": "b87a8a054e762c2666853d67ba9266e2ff1fe86da4a4921e7b9a9bafc9c041a2",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 29075,
+      "issues": 5408,
+      "issue_counts": {
+        "UnsupportedRecord": 5408
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "field:format-metadata": 1,
+        "unsupported-record": 5408
+      }
+    },
+    {
+      "path": "can_example/blf/VideoGps.blf",
+      "bytes": 9554,
+      "sha256": "66e73adba02f97aab9c95e6ebabcc53a4a2ae282c73eaf018fbdc45891f1c5a8",
+      "source_license": "user-provided local sample; redistribution unverified",
+      "status": "partial",
+      "frames": 0,
+      "issues": 493,
+      "issue_counts": {
+        "UnsupportedRecord": 493
+      },
+      "roundtrip": "pass (CAN frames; declared losses separate)",
+      "actual_record_losses": {
+        "unsupported-record": 493
+      }
+    }
+  ]
+}

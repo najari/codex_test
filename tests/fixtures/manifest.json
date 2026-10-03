@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "path": "can-mixed.asc",
+      "sha256": "b882e6681d134dc3e66f4983e27f41fe04ceaddaf7f48b32a8fde47d7d4bfc8c",
+      "producer": "authored for canlog tests",
+      "profile": "canonical ASC Classic/Remote/FD",
+      "license": "project-authored, no third-party content; repository license unspecified",
+      "expected_frames": 3,
+      "expected_issues": 0,
+      "timestamp_ns": [
+        100000001,
+        200000001,
+        300000001
+      ]
+    }
+  ]
+}
