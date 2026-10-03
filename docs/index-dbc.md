@@ -77,4 +77,5 @@ easy의 `ENVVAR_DATA_`는 cantools oracle의 in-memory 문자열에서만 제외
 upstream tests에 필요한 Vector corpus는 Git에 포함되어 있지 않다. `-EngineSamples`는 pinned source를 `target/dbc-engine-source`에 복사하고 로컬 corpus의 DBC만 추가한다. 외부 engine 및 원본 sample은 수정하지 않는다.
 
 multi-source workspace/assignment 저장과 persistent cache는 [workspace](workspace.md)를 따른다.
-후속 단계: source 이동 재연결, ISO-TP/UDS/CDD, MF4, GUI, 실제 CAN transport.
+source 이동 재연결은 `workspace relink`로 제공한다.
+후속 단계: ISO-TP/UDS/CDD, MF4, GUI, 실제 CAN transport.

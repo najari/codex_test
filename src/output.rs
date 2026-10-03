@@ -85,9 +85,42 @@ pub fn ensure_distinct_paths(a: &Path, b: &Path) -> Result<()> {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        Ok(parent
-            .canonicalize()?
-            .join(path.file_name().context("output filename required")?))
+        // A protected source's entire parent directory may have moved. Resolve
+        // the nearest existing ancestor while retaining the missing suffix.
+        let mut ancestor = parent;
+        let canonical = loop {
+            match ancestor.canonicalize() {
+                Ok(path) => break path,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    let next = ancestor
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .unwrap_or(Path::new("."));
+                    if next == ancestor {
+                        return Err(e.into());
+                    }
+                    ancestor = next;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
+        let mut normalized = canonical;
+        let suffix = if ancestor == Path::new(".") && !parent.is_absolute() {
+            parent
+        } else {
+            parent.strip_prefix(ancestor)?
+        };
+        for component in suffix.components() {
+            match component {
+                std::path::Component::Normal(part) => normalized.push(part),
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
+                std::path::Component::CurDir => {}
+                _ => anyhow::bail!("invalid path suffix"),
+            }
+        }
+        Ok(normalized.join(path.file_name().context("output filename required")?))
     }
     let a = normalized(a)?;
     let b = normalized(b)?;

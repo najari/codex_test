@@ -36,6 +36,31 @@ pub struct Log {
     pub path: PathBuf,
     pub id_map: Option<PathBuf>,
     pub bindings: Vec<Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<SourceIdentity>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceIdentity {
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+impl SourceIdentity {
+    fn read(path: &Path, cancel: &Cancellation) -> Result<Self> {
+        let metadata = fs::metadata(path)?;
+        ensure!(metadata.is_file(), "source must be a regular file");
+        Ok(Self {
+            sha256: index::hash_file(path, cancel)?,
+            size_bytes: metadata.len(),
+        })
+    }
+}
+fn validate_hash(hash: &str) -> Result<()> {
+    ensure!(
+        hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
+        "expected SHA-256 must contain exactly 64 hexadecimal digits"
+    );
+    Ok(())
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,7 +94,7 @@ pub fn create(root: &Path, name: Option<&str>, cancel: &Cancellation) -> Result<
     fs::create_dir(root).context("workspace must be a new directory")?;
     let result = (|| {
         let manifest = Manifest {
-            schema_version: 1,
+            schema_version: 2,
             name: name
                 .unwrap_or_else(|| {
                     root.file_name()
@@ -120,7 +145,7 @@ impl Workspace {
         let manifest: Manifest =
             serde_json::from_slice(&bytes).context("invalid workspace manifest")?;
         ensure!(
-            manifest.schema_version == 1 && manifest.revision > 0,
+            matches!(manifest.schema_version, 1 | 2) && manifest.revision > 0,
             "unsupported workspace manifest version"
         );
         ensure!(
@@ -136,6 +161,9 @@ impl Workspace {
                 log.bindings.len() <= 16 && log.bindings.iter().all(|b| b.channel > 0),
                 "invalid workspace DBC bindings"
             );
+            if let Some(identity) = &log.source_identity {
+                validate_hash(&identity.sha256)?;
+            }
         }
         open_database(&root.join(DATABASE))?;
         Ok(Self { root, manifest })
@@ -159,6 +187,7 @@ impl Workspace {
     }
     fn save(&mut self, cancel: &Cancellation) -> Result<()> {
         cancel.check()?;
+        self.manifest.schema_version = 2;
         self.manifest.revision = self
             .manifest
             .revision
@@ -314,12 +343,108 @@ pub fn add(
             Ok(workspace.stored_path(&p))
         })
         .transpose()?;
+    let identity = SourceIdentity::read(&source, cancel)?;
     workspace.manifest.logs.push(Log {
         name: name.into(),
         path: workspace.stored_path(&source),
         id_map: map,
         bindings: vec![],
+        source_identity: Some(identity.clone()),
     });
+    ensure!(
+        SourceIdentity::read(&source, cancel)? == identity,
+        "source changed during registration"
+    );
+    workspace.save(cancel)?;
+    connection.execute_batch("COMMIT")?;
+    Ok(workspace.manifest)
+}
+
+/// Reconnect a log without changing its content or its DBC/ID-map assignments.
+/// Old derived artifacts retain their original path identity and are not migrated.
+pub fn relink(
+    root: &Path,
+    name: &str,
+    input: &Path,
+    expected_sha256: Option<&str>,
+    cancel: &Cancellation,
+) -> Result<Manifest> {
+    cancel.check()?;
+    if let Some(hash) = expected_sha256 {
+        validate_hash(hash)?;
+    }
+    let connection = open_database(&root.join(DATABASE))?;
+    connection.execute_batch("BEGIN IMMEDIATE")?;
+    let mut workspace = Workspace::load(root)?;
+    let log = workspace.log(name)?.clone();
+    let old = workspace.resolve(&log.path);
+    let source = input.canonicalize()?;
+    ensure!(
+        !source.starts_with(workspace.root.join("indexes")),
+        "source cannot be a managed index"
+    );
+    // The selected log's current source is allowed; every other protected file
+    // remains unavailable as a replacement, including hardlink aliases.
+    for path in workspace.protected_paths() {
+        if path != old && path.try_exists()? {
+            ensure!(
+                !same_file::is_same_file(&source, &path)?,
+                "replacement is registered source or workspace data"
+            );
+        }
+    }
+    let old_exists = old.try_exists()?;
+    let reference = if old_exists {
+        Some(SourceIdentity::read(&old, cancel)?)
+    } else {
+        log.source_identity.clone()
+    };
+    let expected = reference.as_ref().map(|id| id.sha256.as_str()).or(expected_sha256)
+        .context("missing original identity; specify --expected-sha256 from an earlier verified report or index")?;
+    if let Some(hash) = expected_sha256 {
+        ensure!(
+            hash.eq_ignore_ascii_case(expected),
+            "expected SHA-256 conflicts with known source identity"
+        );
+    }
+    let identity = SourceIdentity::read(&source, cancel)?;
+    ensure!(
+        identity.sha256.eq_ignore_ascii_case(expected)
+            && reference
+                .as_ref()
+                .is_none_or(|id| id.size_bytes == identity.size_bytes),
+        "replacement content differs from original; relink requires identical bytes"
+    );
+    let mut reader = crate::formats::open_reader(
+        &source.to_string_lossy(),
+        None,
+        crate::core::Limits::default(),
+    )?;
+    reader.checkpoint()?;
+    drop(reader);
+    ensure!(
+        SourceIdentity::read(&source, cancel)? == identity,
+        "replacement changed during relink"
+    );
+    if old_exists {
+        ensure!(
+            Some(SourceIdentity::read(&old, cancel)?) == reference,
+            "original changed during relink"
+        );
+    }
+    let stored_path = workspace.stored_path(&source);
+    if log.path == stored_path && log.source_identity.as_ref() == Some(&identity) {
+        connection.execute_batch("COMMIT")?;
+        return Ok(workspace.manifest);
+    }
+    let selected = workspace
+        .manifest
+        .logs
+        .iter_mut()
+        .find(|l| l.name == name)
+        .expect("log checked");
+    selected.path = stored_path;
+    selected.source_identity = Some(identity);
     workspace.save(cancel)?;
     connection.execute_batch("COMMIT")?;
     Ok(workspace.manifest)

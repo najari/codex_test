@@ -1,6 +1,7 @@
 # Workspace 및 영속 신호 캐시 검증
 
 검사일: 2026-10-03, Windows MSVC. 명령과 지원 범위는 [workspace.md](workspace.md)를 따른다.
+아래는 최초 workspace/cache 84-test 빌드의 snapshot이다. 이후 source 재연결·manifest schema 2와 최신 release 검증은 [relink-validation.md](relink-validation.md)에 따로 기록한다.
 
 ## 빌드와 회귀 검사
 

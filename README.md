@@ -33,7 +33,7 @@ Windows에는 Rust MSVC toolchain 1.88 이상, Visual Studio C++ Build Tools, Wi
 | `index build INPUT -o INDEX` / `index info INDEX` | 원본 payload를 복제하지 않는 SQLite 검색 인덱스 작성/조회 |
 | `index query INPUT --index INDEX` | 원본을 확인하고 선택 chunk부터 읽는 JSONL 검색 |
 | `decode INPUT --dbc CHANNEL=PATH` | 실제 Rust DBC 엔진을 통한 typed 신호 해석; `--index` 지원 |
-| `workspace create/add/bind/index/query/decode` | 여러 로그 등록, DBC 연결 저장, managed index와 영속 신호 캐시 |
+| `workspace create/add/relink/bind/index/query/decode` | 여러 로그 등록·이동 재연결, DBC 연결 저장, managed index와 영속 신호 캐시 |
 | `workspace cache ROOT info/clear/limit` | 캐시 조회·정리·payload 용량 제한 |
 
 인덱스 생성·시간 검색·채널별 DBC 지정 예제와 정확한 지원 범위는 [SQLite·DBC 사용법](docs/index-dbc.md)을 따른다.
@@ -129,4 +129,4 @@ python -m venv .\target\verify-env
 
 독립 비교용 Python은 CLI 런타임 의존성이 아니다. 스크립트는 로컬 샘플을 수정하지 않고 `artifacts/`에 checksum manifest·CAN 왕복·외부 비교·배속/제어·메모리 측정 결과를 생성한다. Windows benchmark는 peak working set을 사용한다. 로컬 샘플은 재배포 권한이 확인되지 않았으므로 Git/CI에서 제외하며, CI는 프로젝트 생성 fixture와 단위·통합 테스트를 실행한다.
 
-[기존 검증 결과](docs/validation.md), [추가 샘플·ASC 호환성 검증](docs/corpus-validation.md), [SQLite·DBC 검증](docs/index-dbc-validation.md), [workspace 검증](docs/workspace-validation.md), [원래 구현 계획](docs/implementation-plan.md), [장기 설계](docs/canlog-rs-design.md)를 참고한다.
+[기존 검증 결과](docs/validation.md), [추가 샘플·ASC 호환성 검증](docs/corpus-validation.md), [SQLite·DBC 검증](docs/index-dbc-validation.md), [workspace 검증](docs/workspace-validation.md), [재연결 검증](docs/relink-validation.md), [원래 구현 계획](docs/implementation-plan.md), [장기 설계](docs/canlog-rs-design.md)를 참고한다.

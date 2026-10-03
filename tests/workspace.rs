@@ -624,3 +624,261 @@ fn cancellation_before_cache_setup_preserves_existing_output_and_cache() {
     assert_eq!(fs::read(&output).unwrap(), b"KEEP");
     assert_eq!(info(&root), before);
 }
+
+#[test]
+fn moved_log_relinks_identical_bytes_and_rebuilds_path_bound_artifacts() {
+    let (d, root, source, _) = fixture();
+    ok(
+        &cli(&["workspace", "index", p(&root), "first", "--stride", "1"]),
+        0,
+    );
+    let cold = decode(&root, &d.path().join("before.json"), &[]);
+    ok(&cold, 0);
+    let before = json(&fs::read(root.join("workspace.json")).unwrap());
+    let moved = d.path().join("moved.asc");
+    fs::rename(&source, &moved).unwrap();
+    ok(
+        &cli(&["workspace", "relink", p(&root), "first", p(&moved)]),
+        0,
+    );
+    let after = json(&fs::read(root.join("workspace.json")).unwrap());
+    assert_eq!(
+        after["revision"].as_u64().unwrap(),
+        before["revision"].as_u64().unwrap() + 1
+    );
+    assert_eq!(after["logs"][0]["bindings"], before["logs"][0]["bindings"]);
+    assert_eq!(
+        after["logs"][0]["source_identity"],
+        before["logs"][0]["source_identity"]
+    );
+    let next = decode(&root, &d.path().join("moved.json"), &[]);
+    ok(&next, 0);
+    let report = json(&fs::read(d.path().join("moved.json")).unwrap());
+    assert_eq!(report["cache"]["hits"], 0);
+    assert_eq!(report["cache"]["misses"], 3);
+    assert!(report["index"].is_null());
+    let canonical = moved.canonicalize().unwrap();
+    let mut old_rows = rows(&cold.stdout);
+    for row in &mut old_rows {
+        row["record"]["location"]["source"] = p(&canonical).into();
+    }
+    assert_eq!(old_rows, rows(&next.stdout));
+    ok(
+        &cli(&["workspace", "index", p(&root), "first", "--stride", "1"]),
+        0,
+    );
+    let warm = decode(&root, &d.path().join("warm.json"), &[]);
+    ok(&warm, 0);
+    assert_eq!(next.stdout, warm.stdout);
+    let report = json(&fs::read(d.path().join("warm.json")).unwrap());
+    assert_eq!(report["cache"]["hits"], 3);
+    assert!(!report["index"].is_null());
+    let manifest = fs::read(root.join("workspace.json")).unwrap();
+    ok(
+        &cli(&["workspace", "relink", p(&root), "first", p(&moved)]),
+        0,
+    );
+    assert_eq!(fs::read(root.join("workspace.json")).unwrap(), manifest);
+}
+
+#[test]
+fn relink_rejects_changed_content_conflicting_hash_and_protected_aliases() {
+    let (d, root, source, dbc) = fixture();
+    let before = fs::read(root.join("workspace.json")).unwrap();
+    let altered = d.path().join("changed.asc");
+    fs::write(
+        &altered,
+        fs::read_to_string(&source).unwrap().replace("0.2", "0.4"),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::metadata(&altered).unwrap().len(),
+        fs::metadata(&source).unwrap().len()
+    );
+    for target in [
+        &altered,
+        &dbc,
+        &root.join("workspace.json"),
+        &root.join("workspace.db"),
+    ] {
+        ok(
+            &cli(&["workspace", "relink", p(&root), "first", p(target)]),
+            1,
+        );
+        assert_eq!(fs::read(root.join("workspace.json")).unwrap(), before);
+    }
+    let copied = d.path().join("copied.asc");
+    fs::copy(&source, &copied).unwrap();
+    ok(
+        &cli(&[
+            "workspace",
+            "relink",
+            p(&root),
+            "first",
+            p(&copied),
+            "--expected-sha256",
+            &"0".repeat(64),
+        ]),
+        1,
+    );
+    ok(
+        &cli(&[
+            "workspace",
+            "relink",
+            p(&root),
+            "first",
+            p(&copied),
+            "--expected-sha256",
+            "invalid",
+        ]),
+        1,
+    );
+    ok(
+        &cli(&["workspace", "add", p(&root), p(&copied), "--name", "other"]),
+        0,
+    );
+    let before = fs::read(root.join("workspace.json")).unwrap();
+    let alias = d.path().join("alias.asc");
+    fs::hard_link(&copied, &alias).unwrap();
+    ok(
+        &cli(&["workspace", "relink", p(&root), "first", p(&alias)]),
+        1,
+    );
+    assert_eq!(fs::read(root.join("workspace.json")).unwrap(), before);
+    let index = root.join("indexes").join("fake.asc");
+    fs::copy(&source, &index).unwrap();
+    ok(
+        &cli(&["workspace", "relink", p(&root), "first", p(&index)]),
+        1,
+    );
+    assert_eq!(fs::read(root.join("workspace.json")).unwrap(), before);
+}
+
+#[test]
+fn legacy_manifest_requires_explicit_hash_when_original_is_missing() {
+    let (d, root, source, _) = fixture();
+    let hash = canlog::index::hash_file(&source, &Default::default()).unwrap();
+    let mut manifest = json(&fs::read(root.join("workspace.json")).unwrap());
+    manifest["schema_version"] = 1.into();
+    manifest["logs"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_identity");
+    fs::write(
+        root.join("workspace.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let moved = root.join("moved.asc");
+    fs::rename(source, &moved).unwrap();
+    let before = fs::read(root.join("workspace.json")).unwrap();
+    ok(
+        &cli(&["workspace", "relink", p(&root), "first", p(&moved)]),
+        1,
+    );
+    assert_eq!(fs::read(root.join("workspace.json")).unwrap(), before);
+    ok(
+        &cli(&[
+            "workspace",
+            "relink",
+            p(&root),
+            "first",
+            p(&moved),
+            "--expected-sha256",
+            &hash.to_uppercase(),
+        ]),
+        0,
+    );
+    let after = json(&fs::read(root.join("workspace.json")).unwrap());
+    assert_eq!(after["schema_version"], 2);
+    assert_eq!(after["logs"][0]["path"], "moved.asc");
+    assert_eq!(after["logs"][0]["source_identity"]["sha256"], hash);
+    ok(&decode(&root, &d.path().join("legacy.json"), &[]), 0);
+}
+
+#[test]
+fn legacy_relink_can_verify_existing_original_and_records_current_revision() {
+    let (d, root, source, _) = fixture();
+    let mut manifest = json(&fs::read(root.join("workspace.json")).unwrap());
+    manifest["schema_version"] = 1.into();
+    manifest["logs"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_identity");
+    fs::write(
+        root.join("workspace.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    // A current, reachable source is authoritative after an intentional edit.
+    fs::write(
+        &source,
+        fs::read_to_string(&source).unwrap().replace("0.2", "0.4"),
+    )
+    .unwrap();
+    let copy = d.path().join("copy.asc");
+    fs::copy(&source, &copy).unwrap();
+    ok(
+        &cli(&["workspace", "relink", p(&root), "first", p(&copy)]),
+        0,
+    );
+    let after = json(&fs::read(root.join("workspace.json")).unwrap());
+    assert_eq!(after["schema_version"], 2);
+    assert_eq!(
+        after["logs"][0]["source_identity"]["sha256"],
+        canlog::index::hash_file(&copy, &Default::default()).unwrap()
+    );
+    assert!(source.exists());
+}
+
+#[test]
+fn missing_unrelated_source_directory_does_not_block_output_protection() {
+    let (d, root, _, _) = fixture();
+    let folder = d.path().join("old-folder");
+    fs::create_dir(&folder).unwrap();
+    let file = folder.join("other.asc");
+    fs::write(&file, "base hex timestamps absolute\n0.1 1 100 Rx d 0\n").unwrap();
+    ok(
+        &cli(&["workspace", "add", p(&root), p(&file), "--name", "other"]),
+        0,
+    );
+    fs::remove_file(&file).unwrap();
+    fs::remove_dir(&folder).unwrap();
+    let output = d.path().join("out.jsonl");
+    let good = decode(&root, &d.path().join("ok.json"), &["-o", p(&output)]);
+    ok(&good, 0);
+    assert_eq!(rows(&fs::read(output).unwrap()).len(), 3);
+    // Missing parent paths still normalize identically, including dot segments.
+    assert!(canlog::output::ensure_distinct_paths(
+        &file,
+        &folder.join("..").join("old-folder").join("other.asc")
+    )
+    .is_err());
+}
+
+#[test]
+fn cancelled_relink_and_unknown_identity_schema_leave_manifest_unchanged() {
+    let (_d, root, source, _) = fixture();
+    let before = fs::read(root.join("workspace.json")).unwrap();
+    let cancel = canlog::playback::Cancellation::default();
+    cancel.cancel();
+    assert!(
+        canlog::workspace::relink(&root, "first", &source, None, &cancel)
+            .unwrap_err()
+            .is::<canlog::playback::Cancelled>()
+    );
+    assert_eq!(fs::read(root.join("workspace.json")).unwrap(), before);
+    let mut manifest = json(&before);
+    manifest["schema_version"] = 999.into();
+    fs::write(
+        root.join("workspace.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let before = fs::read(root.join("workspace.json")).unwrap();
+    ok(
+        &cli(&["workspace", "relink", p(&root), "first", p(&source)]),
+        1,
+    );
+    assert_eq!(fs::read(root.join("workspace.json")).unwrap(), before);
+}

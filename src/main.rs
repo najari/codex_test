@@ -139,6 +139,15 @@ enum WorkspaceCommand {
         #[arg(long)]
         id_map: Option<PathBuf>,
     },
+    /// Reconnect a registered log to a file with identical content.
+    Relink {
+        workspace: PathBuf,
+        log: String,
+        input: PathBuf,
+        /// Required for legacy entries when the old source and identity are unavailable.
+        #[arg(long)]
+        expected_sha256: Option<String>,
+    },
     /// Replace all stored DBC bindings for one registered log.
     Bind {
         workspace: PathBuf,
@@ -203,6 +212,18 @@ fn workspace_command(command: WorkspaceCommand, cancel: &Cancellation) -> anyhow
             &input,
             &name,
             id_map.as_deref(),
+            cancel,
+        )?)?,
+        WorkspaceCommand::Relink {
+            workspace,
+            log,
+            input,
+            expected_sha256,
+        } => serde_json::to_value(ws::relink(
+            &workspace,
+            &log,
+            &input,
+            expected_sha256.as_deref(),
             cancel,
         )?)?,
         WorkspaceCommand::Bind {

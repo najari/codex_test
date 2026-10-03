@@ -40,6 +40,7 @@ BLF도 같은 workspace에 등록할 수 있다. CANoe demo의 easy DBC는 채�
 | `workspace create ROOT [--name NAME]` | 새 manifest·SQLite·indexes 폴더 생성 |
 | `workspace info ROOT` | 현재 설정 JSON 조회 |
 | `workspace add ROOT INPUT --name LOG [--id-map PATH]` | ASC·BLF 등록; 중복 이름/동일 파일 실체 거부 |
+| `workspace relink ROOT LOG NEW_INPUT [--expected-sha256 HASH]` | 내용이 같은 파일의 새 경로로 재연결 |
 | `workspace bind ROOT LOG --dbc CHANNEL=PATH ...` | 해당 로그의 저장된 연결 전체 교체; 실제 DBC 검증 |
 | `workspace index ROOT LOG [--stride N]` | 전체 scan 인덱스 생성 또는 동일 원본·설정의 기존 인덱스 검증 |
 | `workspace query ROOT LOG [FILTERS]` | 원본 CAN JSONL; 일치하는 인덱스가 있으면 사용 |
@@ -62,12 +63,45 @@ ID map도 add에서 저장할 수 있고 이번 실행의 `--id-map`으로 대�
 
 ## 저장 구조와 정합성
 
-`workspace.json` schema 1은 name, revision, cache quota와 각 로그의 name/path/id_map/bindings를 가진다.
+`workspace.json` schema 2는 name, revision, cache quota와 각 로그의 name/path/id_map/bindings 및 선택적 source_identity(SHA-256·byte 수)를 가진다.
+기존 schema 1도 읽으며 설정을 변경할 때 schema 2로 저장한다. SQLite schema는 기존 1을 유지한다.
 add/bind/quota 변경에서 revision을 증가시키며 이전 manifest 전체 snapshot을 보관하지는 않는다.
 workspace 내부 경로는 상대 경로, 외부 경로는 절대 경로로 저장한다.
 상대 경로의 기준은 workspace 폴더다. Windows 절대 경로는 canonical `\\?\` 표기로 저장될 수 있다.
 직접 해석과 원본 위치 문자열까지 비교하려면 같은 등록 경로 표기를 사용한다.
-원본이 이동하면 자동 검색하지 않는다. 현재는 manifest 경로를 명시적으로 수정해야 한다.
+원본이 이동하면 자동 검색하지 않는다. `relink`에 새 파일을 명시한다. 자세한 절차는 아래를 따른다.
+
+## 이동한 로그 재연결
+
+```powershell
+.\dist\canlog.exe workspace relink .\artifacts\sample_workspace motorola "D:\CANLogs\motorola_matrix.asc"
+.\dist\canlog.exe workspace index .\artifacts\sample_workspace motorola --stride 128
+.\dist\canlog.exe workspace decode .\artifacts\sample_workspace motorola
+```
+
+relink는 파일을 이동·복사하지 않고 등록 경로를 바꾼다. 현재 원본이 있으면 원본의 현재 전체 SHA-256와 byte 수를 비교한다.
+원본이 없으면 add 또는 이전 relink에서 저장한 source_identity와 비교한다. 같은 크기의 다른 내용도 거부한다.
+원본이 add 이후 변경되었고 그 변경본을 이미 이동했다면 등록 당시 identity와 다를 수 있다.
+이 경우 임의로 identity를 덮어쓰지 않으며, 해당 변경본은 새 로그 이름으로 등록한다.
+원본이 아직 있으면 변경 후 같은 내용의 복사본에 relink하여 현재 identity를 저장할 수 있다.
+
+schema 1의 기존 로그는 저장된 identity가 없을 수 있다. 원본도 사라졌다면 이전 검증 report의 source_sha256나
+`index info`의 source_sha256를 확인하여 명시한다. 새 파일만 보고 기존 파일이었다고 추정하지 않는다.
+
+```powershell
+.\dist\canlog.exe index info .\old-index.sqlite
+.\dist\canlog.exe workspace relink .\old-workspace log1 "D:\CANLogs\log.asc" --expected-sha256 <이전-검증에서-확인한-64자리-SHA256>
+```
+
+이미 알려진 원본 identity가 있으면 `--expected-sha256`도 그 값과 일치해야 한다.
+로그 이름, DBC·ID-map 연결과 캐시 quota를 유지하고, 실제 경로/identity가 변경될 때만 manifest revision을 올린다.
+동일 경로·identity로 반복 relink하면 revision을 바꾸지 않는다. 상대 경로는 기존과 같이 workspace 내부에만 저장한다.
+
+경로가 바뀌면 기존 index와 signal cache의 key가 달라진다. relink는 이들을 복사하거나 재라벨링하지 않는다.
+첫 query/decode는 full scan이고 신호 cache는 misses로 채워지며, explicit index 후에는 새 index를 사용한다.
+과거 경로의 cache/index는 보존하며 cache quota/clear와 기존 index 관리 규칙을 적용한다.
+DBC·ID-map 파일의 경로는 그대로이므로 이 파일들도 이동했다면 DBC bind 또는 이번 실행의 ID-map 옵션으로 지정한다.
+workspace 설정·DB·managed index 및 다른 등록 로그의 hardlink 실체로는 재연결할 수 없다.
 
 `workspace.db`는 SQLite WAL이며 derived source revision catalog와 신호 cache를 담는다.
 `indexes/<content-key>.sqlite`는 [sparse index](index-dbc.md)다.
@@ -104,7 +138,7 @@ batch는 최대 128 rows/2 MiB, 단일 row는 최대 2 MiB다. LRU eviction은 �
 
 manifest 상한은 1 MiB/4,096 logs이며 로그 이름은 128 UTF-8 bytes 이내의 문자·숫자·`_-.`이다.
 DBC assignment 상한 16개/각 파일 32 MiB와 parser resource limit을 그대로 적용한다.
-source 이동 재연결 CLI, resume/crash scan 복구, signal CSV/Parquet, multi-clock merge,
+resume/crash scan 복구, signal CSV/Parquet, multi-clock merge,
 ISO-TP/UDS/CDD, MF4, GUI와 실제 CAN transport는 후속 작업이다.
 
 ## 검증 재현
@@ -112,7 +146,8 @@ ISO-TP/UDS/CDD, MF4, GUI와 실제 CAN transport는 후속 작업이다.
 ```powershell
 .\scripts\build.ps1 -Test -Release
 .\target\verify-env\Scripts\python.exe .\scripts\verify_workspace.py --out .\artifacts\workspace-rerun
+.\target\verify-env\Scripts\python.exe .\scripts\verify_relink.py --out .\artifacts\relink-rerun
 ```
 
 Python 3.11 이상과 `cantools==43.0.2`는 독립 비교용이다. 새 output 폴더를 지정한다.
-증거와 결과는 [workspace 검증](workspace-validation.md)에 정리했다.
+증거와 결과는 [workspace 검증](workspace-validation.md) 및 [재연결 검증](relink-validation.md)에 정리했다.

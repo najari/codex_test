@@ -51,6 +51,7 @@ ID 매핑은 schema version 1 JSON의 channel/name 쌍이 정확히 일치할 �
 
 단일 ASC/BLF의 SQLite sparse index와 실제 Rust DBC 해석은 구현되어 있다. 명령과 범위는 [index-dbc.md](index-dbc.md)를 따른다.
 multi-source workspace/assignment 저장과 persistent signal cache도 구현되어 있다. [workspace.md](workspace.md)에 저장 규칙·quota·정합성과 명령을 정리했다.
-source 이동 재연결, 장비 transport adapter, error/event의 typed 분석과 교차 포맷 Writer, CDD·진단, MF4, multi-file clock/merge, GUI는 후속 확장이다. 보존 기록의 JSONL/CSV export, 반복 time shift, arbitrary ASC dialect도 별도 확장이 필요하다.
+같은 내용의 source 이동 재연결도 `workspace relink`로 제공한다. 현재/등록 원본의 SHA-256를 확인하며 과거 경로의 index/cache는 그대로 재사용하지 않는다.
+장비 transport adapter, error/event의 typed 분석과 교차 포맷 Writer, CDD·진단, MF4, multi-file clock/merge, GUI는 후속 확장이다. 보존 기록의 JSONL/CSV export, 반복 time shift, arbitrary ASC dialect도 별도 확장이 필요하다.
 
 독립 비교 근거: [python-can 4.6.1 ASC 구현](https://python-can.readthedocs.io/en/4.6.1/_modules/can/io/asc.html), [BLF 구현](https://python-can.readthedocs.io/en/4.6.1/_modules/can/io/blf.html). python-can의 epoch float64 시간 양자화와 FD zero-length ASC를 remote로 표시하는 차이는 검증 report에 별도로 기록한다.
